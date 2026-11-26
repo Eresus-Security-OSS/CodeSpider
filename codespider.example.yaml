@@ -1,0 +1,41 @@
+# =============================================================================
+# CodeSpider - 24/7 Agentic Gitea PR Reviewer Configuration
+# Copy to codespider.yaml or pass via:
+#   ./codespider -f codespider.yaml
+#   CODESPIDER_CONFIG_PATH=/etc/codespider/codespider.yaml ./codespider
+#
+# Optional: reference environment variables using ${VAR_NAME}
+# =============================================================================
+
+server:
+  listen_addr: ":8080"
+
+gitea:
+  base_url: "https://gitea.example.com"
+  token: "replace-with-gitea-bot-token"
+  webhook_secret: "replace-with-webhook-hmac-secret"
+  bot_username: "codespider"
+  skip_draft_prs: true
+  ignore_bot_prs: true
+
+llm:
+  base_url: "https://api.openai.com/v1"
+  api_key: "replace-with-llm-api-key"
+  model: "gpt-5"
+  timeout_seconds: 120
+
+agent:
+  max_steps: 12
+  max_tokens_per_run: 32000
+  skills_dir: "./skills"
+  default_skills:
+    - security
+    - code-quality
+    - testing
+  enable_write: false
+
+daemon:
+  data_dir: "./data"
+  workers: 2
+  reconcile_interval_seconds: 300
+  log_level: "info"

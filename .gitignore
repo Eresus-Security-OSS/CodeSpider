@@ -26,8 +26,10 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# env and local config files
 .env
+codespider.yaml
+codespider.yml
 
 # Editor/IDE
 # .idea/
