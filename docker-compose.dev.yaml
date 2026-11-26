@@ -1,0 +1,19 @@
+services:
+  codespider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: codespider:dev
+    container_name: codespider
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      CODESPIDER_CONFIG_PATH: /app/codespider.yaml
+    volumes:
+      - ./codespider.yaml:/app/codespider.yaml:ro
+      - ./skills:/app/skills:ro
+      - codespider_data:/app/data
+
+volumes:
+  codespider_data:

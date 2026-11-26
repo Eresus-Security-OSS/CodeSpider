@@ -1,9 +1,6 @@
 services:
   codespider:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: codespider:latest
+    image: ghcr.io/eresus-security-oss/codespider:latest
     container_name: codespider
     restart: unless-stopped
     ports:
