@@ -28,6 +28,14 @@ go build -o codespider ./cmd/codespider
 
 You can also set `CODESPIDER_CONFIG_PATH=/path/to/codespider.yaml` or place `codespider.yaml` in the working directory.
 
+### Docker Compose (Distroless Debian 13)
+
+```bash
+cp codespider.example.yaml codespider.yaml
+# Edit codespider.yaml with your Gitea, webhook, and LLM settings
+DOCKER_BUILDKIT=1 docker compose up -d --build
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
