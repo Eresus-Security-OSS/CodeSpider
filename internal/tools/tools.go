@@ -10,52 +10,191 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/audit"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/evidence"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/gitea"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/llm"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/policy"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/sandbox"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // Handler executes a tool call with JSON arguments and returns a string observation.
 type Handler func(ctx context.Context, rawArgs string) (string, error)
 
-// ReviewState collects inline comments and tracks whether the agent submitted a final Gitea action.
+// ReviewState collects inline comments, structured evidence findings, and tracks review submission.
 type ReviewState struct {
 	mu             sync.Mutex
 	InlineComments []gitea.ReviewComment
+	Findings       []evidence.Finding
+	OutOfDiffNotes []string
 	Submitted      bool
+	flushed        bool
 	Summary        string
+	Verdict        string
+	hasCritical    bool
+	seen           map[string]struct{}
+}
+
+// CommentCount returns the number of staged inline comments.
+func (s *ReviewState) CommentCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.InlineComments)
+}
+
+// SnapshotComments returns a copy of currently staged inline comments.
+func (s *ReviewState) SnapshotComments() []gitea.ReviewComment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]gitea.ReviewComment, len(s.InlineComments))
+	copy(out, s.InlineComments)
+	return out
+}
+
+// SnapshotFindings returns a copy of structured evidence findings.
+func (s *ReviewState) SnapshotFindings() []evidence.Finding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]evidence.Finding, len(s.Findings))
+	copy(out, s.Findings)
+	return out
+}
+
+// RemoveCommentsByIndices removes staged inline comments at the specified 0-based indices
+// and marks matching Findings as refuted with counter-evidence.
+func (s *ReviewState) RemoveCommentsByIndices(indices []int) {
+	if len(indices) == 0 {
+		return
+	}
+	drop := make(map[int]bool, len(indices))
+	for _, idx := range indices {
+		drop[idx] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := make([]gitea.ReviewComment, 0, len(s.InlineComments))
+	for i, c := range s.InlineComments {
+		if !drop[i] {
+			kept = append(kept, c)
+		}
+	}
+	s.InlineComments = kept
+	for i := range s.Findings {
+		if drop[i] {
+			s.Findings[i].State = evidence.StateRefuted
+		}
+	}
+}
+
+// MarkCorroborated updates staged inline comments at the given indices to model_corroborated
+// without claiming formal proof.
+func (s *ReviewState) MarkCorroborated(indices []int) {
+	if len(indices) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, idx := range indices {
+		if idx >= 0 && idx < len(s.InlineComments) {
+			if !strings.Contains(s.InlineComments[idx].Body, "[MODEL CORROBORATED]") {
+				s.InlineComments[idx].Body = "**[MODEL CORROBORATED]** " + s.InlineComments[idx].Body
+			}
+			if idx < len(s.Findings) {
+				s.Findings[idx].State = evidence.StateModelCorroborated
+			}
+		}
+	}
+}
+
+// MarkVerified is retained as an alias for MarkCorroborated.
+func (s *ReviewState) MarkVerified(indices []int) {
+	s.MarkCorroborated(indices)
+}
+
+// FinalSummaryAndVerdict returns the submitted summary and verdict.
+func (s *ReviewState) FinalSummaryAndVerdict() (string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Summary, s.Verdict
+}
+
+// StageSummary sets the summary and verdict and marks the review submitted for FlushReview.
+func (s *ReviewState) StageSummary(summary, verdict string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Summary = summary
+	s.Verdict = verdict
+	s.Submitted = true
+}
+
+// IsSubmitted reports whether submit_review or reply_comment succeeded.
+func (s *ReviewState) IsSubmitted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Submitted
+}
+
+// HasCritical reports whether any staged inline comment was marked critical.
+func (s *ReviewState) HasCritical() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hasCritical
 }
 
 // Registry holds tool definitions and handlers for a single agent run.
 type Registry struct {
-	defs     []llm.ToolDefinition
-	handlers map[string]Handler
-	State    *ReviewState
+	defs        []llm.ToolDefinition
+	handlers    map[string]Handler
+	params      Params
+	deferSubmit bool
+	State       *ReviewState
+}
+
+// SetDeferSubmit controls whether submit_review defers the Gitea API call until FlushReview.
+func (r *Registry) SetDeferSubmit(deferIt bool) {
+	r.deferSubmit = deferIt
 }
 
 // Params bundles dependencies needed to construct a per-PR tool registry.
 type Params struct {
-	WorktreeDir string
-	Workspace   *workspace.Manager
-	Gitea       *gitea.Client
-	Trigger     gitea.ReviewTrigger
-	Diff        string
-	EnableWrite bool
-	AuthorName  string
+	WorktreeDir           string
+	BaseWorktreeDir       string
+	Workspace             *workspace.Manager
+	Gitea                 *gitea.Client
+	Sandbox               *sandbox.Executor
+	Audit                 *audit.Logger
+	Permissions           *policy.PermissionSet
+	Trigger               gitea.ReviewTrigger
+	Diff                  string
+	IncrementalDiff       string
+	PreviousSHA           string
+	MinSeverity           string
+	DeterministicFindings []evidence.Finding
+	VerifyHeadSHA         func(ctx context.Context) error
+	EnableWrite           bool
+	EnableProofOfBug      bool
+	DryRun                bool
+	AuthorName            string
+	OnToolCall            func(name, summary string)
 }
 
 // NewRegistry builds the toolset for a PR review or comment-reply run.
 func NewRegistry(p Params) *Registry {
 	reg := &Registry{
 		handlers: make(map[string]Handler),
+		params:   p,
 		State:    &ReviewState{},
 	}
+	validLines := ParseDiffValidLines(p.Diff)
 
+	annotatedDiff := AnnotateDiff(p.Diff)
 	reg.register("get_pr_diff",
-		"Return the unified diff of the pull request. Supports optional line offset and limit for large diffs.",
+		"Return the unified diff of the pull request with [L<num>] new-file line annotations. Supports optional line offset and limit for large diffs.",
 		schema(map[string]any{
 			"offset": prop("integer", "1-based line offset (default 1)"),
 			"limit":  prop("integer", "Max lines to return (default 400)"),
@@ -66,7 +205,57 @@ func NewRegistry(p Params) *Registry {
 				Limit  int `json:"limit"`
 			}
 			_ = json.Unmarshal([]byte(raw), &args)
-			return sliceLines(p.Diff, args.Offset, args.Limit, 400), nil
+			return sliceLines(annotatedDiff, args.Offset, args.Limit, 400), nil
+		},
+	)
+
+	if strings.TrimSpace(p.IncrementalDiff) != "" {
+		annotatedInc := AnnotateDiff(p.IncrementalDiff)
+		reg.register("get_incremental_diff",
+			fmt.Sprintf("Return only the diff introduced since the previously reviewed commit (%s..%s) with [L<num>] line annotations.", p.PreviousSHA, p.Trigger.HeadSHA),
+			schema(map[string]any{
+				"offset": prop("integer", "1-based line offset (default 1)"),
+				"limit":  prop("integer", "Max lines to return (default 400)"),
+			}, nil),
+			func(ctx context.Context, raw string) (string, error) {
+				var args struct {
+					Offset int `json:"offset"`
+					Limit  int `json:"limit"`
+				}
+				_ = json.Unmarshal([]byte(raw), &args)
+				return sliceLines(annotatedInc, args.Offset, args.Limit, 400), nil
+			},
+		)
+	}
+
+	reg.register("list_files",
+		"List file paths inside the PR worktree (excluding .git, node_modules, vendor).",
+		schema(map[string]any{
+			"subpath": prop("string", "Optional subdirectory to list"),
+			"glob":    prop("string", "Optional filename glob pattern (e.g. *.go)"),
+		}, nil),
+		func(ctx context.Context, raw string) (string, error) {
+			var args struct {
+				Subpath string `json:"subpath"`
+				Glob    string `json:"glob"`
+			}
+			if strings.TrimSpace(raw) != "" {
+				if err := json.Unmarshal([]byte(raw), &args); err != nil {
+					return "", err
+				}
+			}
+			if p.WorktreeDir == "" {
+				return "", fmt.Errorf("worktree not available")
+			}
+			root := p.WorktreeDir
+			if args.Subpath != "" {
+				var err error
+				root, err = workspace.ResolveSafePath(p.WorktreeDir, args.Subpath)
+				if err != nil {
+					return "", err
+				}
+			}
+			return listRepoFiles(ctx, p.WorktreeDir, root, args.Glob, 200)
 		},
 	)
 
@@ -89,11 +278,7 @@ func NewRegistry(p Params) *Registry {
 			if p.WorktreeDir == "" {
 				return "", fmt.Errorf("worktree not available")
 			}
-			full, err := workspace.ResolveSafePath(p.WorktreeDir, args.Path)
-			if err != nil {
-				return "", err
-			}
-			data, err := os.ReadFile(full)
+			data, err := workspace.ReadSafeFile(p.WorktreeDir, args.Path, 2<<20)
 			if err != nil {
 				return "", err
 			}
@@ -157,19 +342,37 @@ func NewRegistry(p Params) *Registry {
 		},
 	)
 
+	reg.register("list_pr_reviews",
+		"List existing formal PR reviews on this pull request.",
+		schema(map[string]any{}, nil),
+		func(ctx context.Context, raw string) (string, error) {
+			if p.Gitea == nil {
+				return "[]", nil
+			}
+			reviews, err := p.Gitea.ListPullReviews(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber)
+			if err != nil {
+				return "", err
+			}
+			b, _ := json.Marshal(reviews)
+			return string(b), nil
+		},
+	)
+
 	reg.register("add_inline_comment",
 		"Stage an inline review comment on a specific file and new line number. Call submit_review when finished.",
 		schema(map[string]any{
 			"path":       prop("string", "File path relative to repo root"),
-			"line":       prop("integer", "1-based line number in the new version of the file"),
+			"line":       prop("integer", "1-based end/target line number in the new version of the file"),
+			"start_line": prop("integer", "Optional 1-based start line for multi-line suggestions"),
 			"severity":   prop("string", "info, warning, or critical"),
 			"body":       prop("string", "Concise, actionable review comment"),
-			"suggestion": prop("string", "Optional replacement code for the target line, rendered as a 1-click Gitea suggestion block without markdown fences"),
+			"suggestion": prop("string", "Optional replacement code for the target line(s), rendered as a 1-click Gitea suggestion block without markdown fences"),
 		}, []string{"path", "line", "body"}),
 		func(ctx context.Context, raw string) (string, error) {
 			var args struct {
 				Path       string `json:"path"`
 				Line       int64  `json:"line"`
+				StartLine  int64  `json:"start_line"`
 				Severity   string `json:"severity"`
 				Body       string `json:"body"`
 				Suggestion string `json:"suggestion"`
@@ -180,19 +383,64 @@ func NewRegistry(p Params) *Registry {
 			if args.Path == "" || args.Line < 1 || strings.TrimSpace(args.Body) == "" {
 				return "", fmt.Errorf("path, line >= 1, and body are required")
 			}
+			if p.MinSeverity != "" && severityRank(args.Severity) < severityRank(p.MinSeverity) {
+				return fmt.Sprintf("skipped comment on %s:%d (severity %q is below repo min_severity %q)", args.Path, args.Line, args.Severity, p.MinSeverity), nil
+			}
 			body := args.Body
+			if args.StartLine > 0 && args.StartLine < args.Line {
+				body = fmt.Sprintf("*(Lines %d–%d)* %s", args.StartLine, args.Line, body)
+			}
 			if args.Severity != "" {
 				body = fmt.Sprintf("**[%s]** %s", strings.ToUpper(args.Severity), body)
 			}
 			if sug := stripCodeFences(args.Suggestion); sug != "" {
 				body = fmt.Sprintf("%s\n\n```suggestion\n%s\n```", body, sug)
 			}
+
+			// Diff hunk gate: if the diff has explicit hunks and line is outside them,
+			// move the finding into summary notes rather than failing Gitea review creation.
+			if len(validLines) > 0 && !isLineInDiff(validLines, args.Path, args.Line) {
+				reg.State.mu.Lock()
+				if strings.EqualFold(strings.TrimSpace(args.Severity), "critical") {
+					reg.State.hasCritical = true
+				}
+				reg.State.OutOfDiffNotes = append(reg.State.OutOfDiffNotes, fmt.Sprintf("- **%s:%d** — %s", args.Path, args.Line, body))
+				reg.State.mu.Unlock()
+				return fmt.Sprintf("line %s:%d is outside diff hunks; recorded in review summary notes", args.Path, args.Line), nil
+			}
+
+			dedupKey := fmt.Sprintf("%s:%d:%s", args.Path, args.Line, body)
 			reg.State.mu.Lock()
+			if reg.State.seen == nil {
+				reg.State.seen = make(map[string]struct{})
+			}
+			if _, exists := reg.State.seen[dedupKey]; exists {
+				reg.State.mu.Unlock()
+				return fmt.Sprintf("duplicate inline comment on %s:%d skipped", args.Path, args.Line), nil
+			}
+			reg.State.seen[dedupKey] = struct{}{}
+			if strings.EqualFold(strings.TrimSpace(args.Severity), "critical") {
+				reg.State.hasCritical = true
+			}
 			reg.State.InlineComments = append(reg.State.InlineComments, gitea.ReviewComment{
 				Path:       args.Path,
 				NewLineNum: args.Line,
 				Body:       body,
 			})
+			f := evidence.Finding{
+				Fingerprint: evidence.ComputeFingerprint("CS-LLM-001", "agent", args.Path, fmt.Sprintf("%s:%d", args.Path, args.Line)),
+				RuleID:      "CS-LLM-001",
+				Category:    "agent",
+				Severity:    strings.ToLower(strings.TrimSpace(args.Severity)),
+				State:       evidence.StateCandidate,
+				Path:        args.Path,
+				StartLine:   args.StartLine,
+				EndLine:     args.Line,
+				CommitSHA:   p.Trigger.HeadSHA,
+				Body:        args.Body,
+				Suggestion:  stripCodeFences(args.Suggestion),
+			}
+			reg.State.Findings = append(reg.State.Findings, f)
 			count := len(reg.State.InlineComments)
 			reg.State.mu.Unlock()
 			return fmt.Sprintf("staged inline comment #%d on %s:%d", count, args.Path, args.Line), nil
@@ -218,25 +466,21 @@ func NewRegistry(p Params) *Registry {
 				verdict = "COMMENT"
 			}
 			reg.State.mu.Lock()
-			comments := append([]gitea.ReviewComment(nil), reg.State.InlineComments...)
 			reg.State.Summary = args.Summary
-			reg.State.mu.Unlock()
-
-			if p.Gitea != nil {
-				err := p.Gitea.CreateReview(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber, gitea.CreateReviewRequest{
-					CommitID: p.Trigger.HeadSHA,
-					Body:     args.Summary,
-					Event:    verdict,
-					Comments: comments,
-				})
-				if err != nil {
-					return "", err
-				}
-			}
-			reg.State.mu.Lock()
+			reg.State.Verdict = verdict
 			reg.State.Submitted = true
 			reg.State.mu.Unlock()
-			return fmt.Sprintf("submitted review (%s) with %d inline comments", verdict, len(comments)), nil
+
+			if reg.deferSubmit {
+				return fmt.Sprintf("staged review (%s) for verification", verdict), nil
+			}
+			if err := reg.FlushReview(ctx); err != nil {
+				reg.State.mu.Lock()
+				reg.State.Submitted = false
+				reg.State.mu.Unlock()
+				return "", err
+			}
+			return fmt.Sprintf("submitted review (%s) with %d inline comments", verdict, reg.State.CommentCount()), nil
 		},
 	)
 
@@ -255,24 +499,160 @@ func NewRegistry(p Params) *Registry {
 			if strings.TrimSpace(args.Body) == "" {
 				return "", fmt.Errorf("body is required")
 			}
-			if p.Gitea != nil {
+			if !p.DryRun && p.Gitea != nil {
+				if p.Permissions != nil {
+					if err := policy.CheckSideEffectAllowed(policy.EffectPostComment, *p.Permissions); err != nil {
+						return "", err
+					}
+				}
+				if p.VerifyHeadSHA != nil {
+					if err := p.VerifyHeadSHA(ctx); err != nil {
+						return "", err
+					}
+				}
 				if err := p.Gitea.PostComment(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber, args.Body); err != nil {
 					return "", err
 				}
 			}
 			reg.State.mu.Lock()
 			reg.State.Submitted = true
+			reg.State.flushed = true
 			reg.State.Summary = args.Body
 			reg.State.mu.Unlock()
 			return "posted reply comment", nil
 		},
 	)
 
+	reg.registerAdvancedTools(p)
+
 	if p.EnableWrite {
 		reg.registerWriteTools(p)
 	}
 
 	return reg
+}
+
+// ConsolidateFindings merges statically supported deterministic findings into ReviewState
+// without duplicating LLM comments already targeting the same file/line, and upgrades Verdict on criticals.
+func (r *Registry) ConsolidateFindings(detFindings []evidence.Finding, minSeverity string) {
+	if len(detFindings) == 0 {
+		return
+	}
+	validLines := ParseDiffValidLines(r.params.Diff)
+
+	r.State.mu.Lock()
+	defer r.State.mu.Unlock()
+
+	for _, df := range detFindings {
+		if minSeverity != "" && severityRank(df.Severity) < severityRank(minSeverity) {
+			continue
+		}
+		if strings.EqualFold(df.Severity, "critical") {
+			r.State.hasCritical = true
+		}
+
+		// Check if an existing LLM comment already covers the same file and nearby line (+/- 3).
+		matched := false
+		for i := range r.State.InlineComments {
+			c := &r.State.InlineComments[i]
+			if filepath.ToSlash(c.Path) == filepath.ToSlash(df.Path) && absInt64(c.NewLineNum-df.EndLine) <= 3 {
+				if !strings.Contains(c.Body, "[STATICALLY SUPPORTED]") {
+					c.Body = "**[STATICALLY SUPPORTED]** " + c.Body
+				}
+				if i < len(r.State.Findings) {
+					r.State.Findings[i].State = evidence.StateStaticallySupported
+					r.State.Findings[i].Evidence = append(r.State.Findings[i].Evidence, df.Evidence...)
+				}
+				matched = true
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+
+		body := df.RenderInlineBody()
+		if len(validLines) > 0 && !isLineInDiff(validLines, df.Path, df.EndLine) {
+			r.State.OutOfDiffNotes = append(r.State.OutOfDiffNotes, fmt.Sprintf("- **%s:%d** — %s", df.Path, df.EndLine, body))
+			continue
+		}
+
+		if r.State.seen == nil {
+			r.State.seen = make(map[string]struct{})
+		}
+		dedupKey := fmt.Sprintf("%s:%d:%s", df.Path, df.EndLine, df.RuleID)
+		if _, exists := r.State.seen[dedupKey]; exists {
+			continue
+		}
+		r.State.seen[dedupKey] = struct{}{}
+		r.State.InlineComments = append(r.State.InlineComments, gitea.ReviewComment{
+			Path:       df.Path,
+			NewLineNum: df.EndLine,
+			Body:       body,
+		})
+		r.State.Findings = append(r.State.Findings, df)
+	}
+
+	if r.State.hasCritical && (r.State.Verdict == "" || r.State.Verdict == "COMMENT" || r.State.Verdict == "APPROVE") {
+		r.State.Verdict = "REQUEST_CHANGES"
+	}
+}
+
+func absInt64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// FlushReview sends a staged PR review to Gitea if it has not been flushed yet and DryRun is false.
+// It consolidates deterministic findings and verifies the remote PR head SHA before publication.
+func (r *Registry) FlushReview(ctx context.Context) error {
+	r.ConsolidateFindings(r.params.DeterministicFindings, r.params.MinSeverity)
+
+	r.State.mu.Lock()
+	if !r.State.Submitted || r.State.flushed {
+		r.State.mu.Unlock()
+		return nil
+	}
+	summary := r.State.Summary
+	if len(r.State.OutOfDiffNotes) > 0 {
+		summary = strings.TrimSpace(summary) + "\n\n### Additional Findings (Outside Diff Hunks)\n" + strings.Join(r.State.OutOfDiffNotes, "\n")
+	}
+	verdict := r.State.Verdict
+	if verdict == "" {
+		verdict = "COMMENT"
+	}
+	comments := append([]gitea.ReviewComment(nil), r.State.InlineComments...)
+	r.State.mu.Unlock()
+
+	if !r.params.DryRun && r.params.Gitea != nil {
+		if r.params.Permissions != nil {
+			if err := policy.CheckSideEffectAllowed(policy.EffectPostReview, *r.params.Permissions); err != nil {
+				return err
+			}
+		}
+		if r.params.VerifyHeadSHA != nil {
+			if err := r.params.VerifyHeadSHA(ctx); err != nil {
+				return err
+			}
+		}
+		err := r.params.Gitea.CreateReview(ctx, r.params.Trigger.Owner, r.params.Trigger.Repo, r.params.Trigger.PRNumber, gitea.CreateReviewRequest{
+			CommitID: r.params.Trigger.HeadSHA,
+			Body:     summary,
+			Event:    verdict,
+			Comments: comments,
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	r.State.mu.Lock()
+	r.State.Summary = summary
+	r.State.flushed = true
+	r.State.mu.Unlock()
+	return nil
 }
 
 func (r *Registry) registerWriteTools(p Params) {
@@ -290,14 +670,7 @@ func (r *Registry) registerWriteTools(p Params) {
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
 				return "", err
 			}
-			full, err := resolveWritablePath(p.WorktreeDir, args.Path)
-			if err != nil {
-				return "", err
-			}
-			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-				return "", err
-			}
-			if err := os.WriteFile(full, []byte(args.Content), 0o644); err != nil {
+			if err := workspace.WriteSafeFile(p.WorktreeDir, args.Path, []byte(args.Content)); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("wrote %d bytes to %s", len(args.Content), args.Path), nil
@@ -323,11 +696,7 @@ func (r *Registry) registerWriteTools(p Params) {
 			if args.OldText == "" {
 				return "", fmt.Errorf("old_text must not be empty")
 			}
-			full, err := resolveWritablePath(p.WorktreeDir, args.Path)
-			if err != nil {
-				return "", err
-			}
-			rawBytes, err := os.ReadFile(full)
+			rawBytes, err := workspace.ReadSafeFile(p.WorktreeDir, args.Path, 2<<20)
 			if err != nil {
 				return "", err
 			}
@@ -340,7 +709,7 @@ func (r *Registry) registerWriteTools(p Params) {
 				return "", fmt.Errorf("old_text matched %d times in %s; provide more context", count, args.Path)
 			}
 			updated := strings.Replace(content, args.OldText, args.NewText, 1)
-			if err := os.WriteFile(full, []byte(updated), 0o644); err != nil {
+			if err := workspace.WriteSafeFile(p.WorktreeDir, args.Path, []byte(updated)); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("edited %s", args.Path), nil
@@ -362,7 +731,17 @@ func (r *Registry) registerWriteTools(p Params) {
 			if p.Workspace == nil {
 				return "", fmt.Errorf("workspace manager not configured")
 			}
-			newSHA, err := p.Workspace.CommitAndPush(ctx, p.WorktreeDir, p.Trigger.CloneURL, p.Trigger.HeadRef, p.AuthorName, args.Message)
+			if p.Permissions != nil {
+				if err := policy.CheckSideEffectAllowed(policy.EffectGitPush, *p.Permissions); err != nil {
+					return "", err
+				}
+			}
+			if p.VerifyHeadSHA != nil {
+				if err := p.VerifyHeadSHA(ctx); err != nil {
+					return "", err
+				}
+			}
+			newSHA, err := p.Workspace.CommitAndPushWithGuard(ctx, p.WorktreeDir, p.Trigger.CloneURL, p.Trigger.HeadRef, p.Trigger.HeadSHA, p.AuthorName, args.Message)
 			if err != nil {
 				return "", err
 			}
@@ -387,11 +766,30 @@ func (r *Registry) Definitions() []llm.ToolDefinition {
 	return r.defs
 }
 
-// Execute runs a named tool and returns its output string.
+// Execute runs a named tool after enforcing capability-based authorization and audit logging.
 func (r *Registry) Execute(ctx context.Context, name, rawArgs string) (string, error) {
+	if r.params.Permissions != nil {
+		if err := policy.CheckToolAllowed(name, *r.params.Permissions); err != nil {
+			r.params.Audit.Log(audit.Event{
+				Actor:    r.params.Trigger.CommentBy,
+				PRKey:    fmt.Sprintf("%s/%s#%d", r.params.Trigger.Owner, r.params.Trigger.Repo, r.params.Trigger.PRNumber),
+				Action:   "tool:" + name,
+				Decision: "deny",
+				Reason:   err.Error(),
+			})
+			return "", err
+		}
+	}
 	h, ok := r.handlers[name]
 	if !ok {
 		return "", fmt.Errorf("unknown tool: %s", name)
+	}
+	if r.params.OnToolCall != nil {
+		summary := strings.TrimSpace(rawArgs)
+		if len(summary) > 120 {
+			summary = summary[:120] + "..."
+		}
+		r.params.OnToolCall(name, summary)
 	}
 	return h(ctx, rawArgs)
 }
@@ -520,6 +918,112 @@ func searchRepo(ctx context.Context, worktreeRoot, searchRoot, pattern string, m
 	}
 	if matches == 0 {
 		return "no matches found", nil
+	}
+	return out.String(), nil
+}
+
+var hunkHeaderRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
+
+// AnnotateDiff prefixes unified diff lines with [L<newLine>] or [DEL] so inline comments
+// can reference exact new-file line numbers.
+func AnnotateDiff(diff string) string {
+	if diff == "" {
+		return ""
+	}
+	lines := strings.Split(diff, "\n")
+	out := make([]string, 0, len(lines))
+	inHunk := false
+	newLine := 0
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "diff --git ") {
+			inHunk = false
+			out = append(out, line)
+			continue
+		}
+		if m := hunkHeaderRe.FindStringSubmatch(line); m != nil {
+			n, err := strconv.Atoi(m[1])
+			if err == nil {
+				newLine = n
+				inHunk = true
+			}
+			out = append(out, line)
+			continue
+		}
+		if !inHunk {
+			out = append(out, line)
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "\\"):
+			out = append(out, line)
+		case strings.HasPrefix(line, "+"):
+			out = append(out, fmt.Sprintf("[L%d] %s", newLine, line))
+			newLine++
+		case strings.HasPrefix(line, "-"):
+			out = append(out, fmt.Sprintf("[DEL] %s", line))
+		case strings.HasPrefix(line, " "):
+			out = append(out, fmt.Sprintf("[L%d] %s", newLine, line))
+			newLine++
+		default:
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func severityRank(s string) int {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "critical":
+		return 3
+	case "warning":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func listRepoFiles(ctx context.Context, worktreeRoot, searchRoot, globPat string, maxFiles int) (string, error) {
+	var out strings.Builder
+	count := 0
+	walkErr := filepath.WalkDir(searchRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(worktreeRoot, path)
+		if err != nil {
+			return nil
+		}
+		relSlash := filepath.ToSlash(rel)
+		if globPat != "" {
+			okBase, _ := filepath.Match(globPat, d.Name())
+			okFull, _ := filepath.Match(globPat, relSlash)
+			if !okBase && !okFull {
+				return nil
+			}
+		}
+		out.WriteString(relSlash)
+		out.WriteByte('\n')
+		count++
+		if count >= maxFiles {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != fs.SkipAll {
+		return "", walkErr
+	}
+	if count == 0 {
+		return "no files found", nil
 	}
 	return out.String(), nil
 }

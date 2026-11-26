@@ -84,3 +84,79 @@ func TestAddInlineCommentWithSuggestion(t *testing.T) {
 		t.Fatalf("missing suggestion block in comment:\n%s", body)
 	}
 }
+
+func TestAnnotateDiffMinSeverityAndListFiles(t *testing.T) {
+	rawDiff := strings.Join([]string{
+		"diff --git a/app.go b/app.go",
+		"--- a/app.go",
+		"+++ b/app.go",
+		"@@ -10,3 +10,4 @@ package main",
+		" func a() {",
+		"-    old()",
+		"+    new1()",
+		"+    new2()",
+		" }",
+	}, "\n")
+
+	annotated := AnnotateDiff(rawDiff)
+	if !strings.Contains(annotated, "[L10]  func a() {") ||
+		!strings.Contains(annotated, "[DEL] -    old()") ||
+		!strings.Contains(annotated, "[L11] +    new1()") ||
+		!strings.Contains(annotated, "[L12] +    new2()") {
+		t.Fatalf("unexpected annotated diff:\n%s", annotated)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "one.go"), []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := NewRegistry(Params{
+		WorktreeDir:     dir,
+		Diff:            rawDiff,
+		IncrementalDiff: rawDiff,
+		PreviousSHA:     "1111111",
+		MinSeverity:     "warning",
+	})
+
+	ctx := context.Background()
+	filesOut, err := reg.Execute(ctx, "list_files", `{"glob":"*.go"}`)
+	if err != nil || !strings.Contains(filesOut, "pkg/one.go") {
+		t.Fatalf("list_files failed: %v, out=%s", err, filesOut)
+	}
+
+	incOut, err := reg.Execute(ctx, "get_incremental_diff", `{}`)
+	if err != nil || !strings.Contains(incOut, "[L11] +    new1()") {
+		t.Fatalf("get_incremental_diff failed: %v, out=%s", err, incOut)
+	}
+
+	// Below MinSeverity ("info" < "warning") should be skipped
+	skipOut, err := reg.Execute(ctx, "add_inline_comment", `{"path":"app.go","line":11,"severity":"info","body":"nit"}`)
+	if err != nil || !strings.Contains(skipOut, "skipped") || reg.State.CommentCount() != 0 {
+		t.Fatalf("expected info comment to be skipped, err=%v out=%s count=%d", err, skipOut, reg.State.CommentCount())
+	}
+
+	// Critical comment should be staged and duplicated call skipped
+	if _, err := reg.Execute(ctx, "add_inline_comment", `{"path":"app.go","line":11,"severity":"critical","body":"bug"}`); err != nil {
+		t.Fatal(err)
+	}
+	dupOut, err := reg.Execute(ctx, "add_inline_comment", `{"path":"app.go","line":11,"severity":"critical","body":"bug"}`)
+	if err != nil || !strings.Contains(dupOut, "duplicate") || reg.State.CommentCount() != 1 || !reg.State.HasCritical() {
+		t.Fatalf("unexpected dedup/critical state: out=%s count=%d critical=%v", dupOut, reg.State.CommentCount(), reg.State.HasCritical())
+	}
+
+	// Out-of-diff-hunk line should be routed to OutOfDiffNotes instead of failing
+	outOfDiff, err := reg.Execute(ctx, "add_inline_comment", `{"path":"app.go","line":999,"severity":"warning","body":"outside hunk"}`)
+	if err != nil || !strings.Contains(outOfDiff, "outside diff hunks") || reg.State.CommentCount() != 1 || len(reg.State.OutOfDiffNotes) != 1 {
+		t.Fatalf("expected out-of-diff note routing, err=%v out=%s notes=%v", err, outOfDiff, reg.State.OutOfDiffNotes)
+	}
+
+	// inspect_go_symbols should parse Go AST
+	symOut, err := reg.Execute(ctx, "inspect_go_symbols", `{"path":"pkg/one.go"}`)
+	if err != nil || !strings.Contains(symOut, "package pkg") {
+		t.Fatalf("inspect_go_symbols failed: %v, out=%s", err, symOut)
+	}
+}
