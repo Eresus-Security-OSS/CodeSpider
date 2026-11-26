@@ -77,6 +77,8 @@ func main() {
 	mux.Handle("/webhook", &gitea.WebhookHandler{
 		Secret:      cfg.GiteaWebhookSecret,
 		BotUsername: cfg.GiteaBotUsername,
+		SkipDrafts:  cfg.SkipDraftPRs,
+		IgnoreBots:  cfg.IgnoreBotPRs,
 		OnTrigger:   pool.Enqueue,
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

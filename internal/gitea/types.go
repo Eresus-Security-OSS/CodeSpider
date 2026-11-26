@@ -29,6 +29,7 @@ type PullRequest struct {
 	State     string    `json:"state"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
+	Draft     bool      `json:"draft"`
 	HTMLURL   string    `json:"html_url"`
 	DiffURL   string    `json:"diff_url"`
 	Head      BranchRef `json:"head"`
@@ -87,6 +88,7 @@ type User struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Login    string `json:"login"`
+	Type     string `json:"type"`
 }
 
 // ReviewComment is a single inline comment in a Gitea PR review submission.

@@ -99,3 +99,68 @@ func TestWebhookIgnoresBotSelfComment(t *testing.T) {
 		t.Fatal("expected bot self-comment to be ignored")
 	}
 }
+
+func TestWebhookSkipsDraftAndBotPRs(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name: "draft flag",
+			payload: `{
+				"action": "opened",
+				"repository": {"full_name": "acme/api"},
+				"pull_request": {"number": 10, "title": "Add feature", "draft": true, "head": {"sha": "abc"}}
+			}`,
+		},
+		{
+			name: "wip title",
+			payload: `{
+				"action": "opened",
+				"repository": {"full_name": "acme/api"},
+				"pull_request": {"number": 11, "title": "[WIP] Refactor", "head": {"sha": "abc"}}
+			}`,
+		},
+		{
+			name: "bot user type",
+			payload: `{
+				"action": "opened",
+				"repository": {"full_name": "acme/api"},
+				"pull_request": {"number": 12, "title": "Bump deps", "user": {"username": "renovate", "type": "Bot"}, "head": {"sha": "abc"}}
+			}`,
+		},
+		{
+			name: "bot suffix",
+			payload: `{
+				"action": "opened",
+				"repository": {"full_name": "acme/api"},
+				"pull_request": {"number": 13, "title": "Bump deps", "user": {"username": "dependabot[bot]"}, "head": {"sha": "abc"}}
+			}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			triggered := false
+			h := &WebhookHandler{
+				BotUsername: "codespider",
+				SkipDrafts:  true,
+				IgnoreBots:  true,
+				OnTrigger: func(tr ReviewTrigger) error {
+					triggered = true
+					return nil
+				},
+			}
+			req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader([]byte(tc.payload)))
+			req.Header.Set("X-Gitea-Event", "pull_request")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200 ignored, got %d", rec.Code)
+			}
+			if triggered {
+				t.Fatalf("expected %s PR to be skipped", tc.name)
+			}
+		})
+	}
+}

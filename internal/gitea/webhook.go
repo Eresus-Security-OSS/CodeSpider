@@ -14,25 +14,28 @@ import (
 
 // ReviewTrigger represents a normalized event that schedules an agent run.
 type ReviewTrigger struct {
-	Kind       string // "pr_review" or "comment_reply"
-	Owner      string
-	Repo       string
-	CloneURL   string
-	PRNumber   int64
-	PRTitle    string
-	PRBody     string
-	BaseRef    string
-	HeadRef    string
-	HeadSHA    string
-	CommentID  int64
-	CommentBy  string
-	Instruction string
+	Kind             string // "pr_review" or "comment_reply"
+	Owner            string
+	Repo             string
+	CloneURL         string
+	PRNumber         int64
+	PRTitle          string
+	PRBody           string
+	BaseRef          string
+	HeadRef          string
+	HeadSHA          string
+	CommentID        int64
+	CommentBy        string
+	Instruction      string
+	RepoInstructions string
 }
 
 // WebhookHandler verifies Gitea webhooks and dispatches normalized triggers.
 type WebhookHandler struct {
 	Secret      string
 	BotUsername string
+	SkipDrafts  bool
+	IgnoreBots  bool
 	OnTrigger   func(ReviewTrigger) error
 }
 
@@ -103,6 +106,17 @@ func (h *WebhookHandler) parseEvent(eventType string, payload []byte) (ReviewTri
 			return ReviewTrigger{}, false, err
 		}
 		if !isReviewablePRAction(ev.Action) {
+			return ReviewTrigger{}, false, nil
+		}
+		if h.SkipDrafts && isDraftPR(ev.PullRequest) {
+			return ReviewTrigger{}, false, nil
+		}
+		prAuthor := firstNonEmpty(ev.PullRequest.User.Username, ev.PullRequest.User.Login)
+		sender := firstNonEmpty(ev.Sender.Username, ev.Sender.Login)
+		if h.BotUsername != "" && (strings.EqualFold(prAuthor, h.BotUsername) || strings.EqualFold(sender, h.BotUsername)) {
+			return ReviewTrigger{}, false, nil
+		}
+		if h.IgnoreBots && (isBotUser(ev.PullRequest.User) || isBotUser(ev.Sender)) {
 			return ReviewTrigger{}, false, nil
 		}
 		owner, repo := splitFullName(ev.Repository.FullName)
@@ -187,4 +201,20 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func isDraftPR(pr PullRequest) bool {
+	if pr.Draft {
+		return true
+	}
+	upper := strings.ToUpper(strings.TrimSpace(pr.Title))
+	return strings.HasPrefix(upper, "WIP:") || strings.HasPrefix(upper, "[WIP]")
+}
+
+func isBotUser(u User) bool {
+	if strings.EqualFold(strings.TrimSpace(u.Type), "Bot") {
+		return true
+	}
+	name := strings.ToLower(strings.TrimSpace(firstNonEmpty(u.Username, u.Login)))
+	return strings.HasSuffix(name, "[bot]")
 }

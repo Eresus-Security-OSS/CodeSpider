@@ -18,6 +18,8 @@ type Config struct {
 	GiteaToken         string
 	GiteaWebhookSecret string
 	GiteaBotUsername   string
+	SkipDraftPRs       bool
+	IgnoreBotPRs       bool
 
 	LLMBaseURL string
 	LLMAPIKey  string
@@ -43,6 +45,8 @@ func LoadFromEnv() (Config, error) {
 		GiteaToken:         os.Getenv("GITEA_TOKEN"),
 		GiteaWebhookSecret: os.Getenv("GITEA_WEBHOOK_SECRET"),
 		GiteaBotUsername:   getEnv("GITEA_BOT_USERNAME", "codespider"),
+		SkipDraftPRs:       getEnvBool("SKIP_DRAFT_PRS", true),
+		IgnoreBotPRs:       getEnvBool("IGNORE_BOT_PRS", true),
 		LLMBaseURL:         strings.TrimRight(getEnv("LLM_BASE_URL", "https://api.openai.com/v1"), "/"),
 		LLMAPIKey:          getEnv("LLM_API_KEY", ""),
 		LLMModel:           getEnv("LLM_MODEL", "gpt-5"),
