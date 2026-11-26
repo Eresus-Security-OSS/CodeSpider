@@ -160,17 +160,19 @@ func NewRegistry(p Params) *Registry {
 	reg.register("add_inline_comment",
 		"Stage an inline review comment on a specific file and new line number. Call submit_review when finished.",
 		schema(map[string]any{
-			"path":     prop("string", "File path relative to repo root"),
-			"line":     prop("integer", "1-based line number in the new version of the file"),
-			"severity": prop("string", "info, warning, or critical"),
-			"body":     prop("string", "Concise, actionable review comment"),
+			"path":       prop("string", "File path relative to repo root"),
+			"line":       prop("integer", "1-based line number in the new version of the file"),
+			"severity":   prop("string", "info, warning, or critical"),
+			"body":       prop("string", "Concise, actionable review comment"),
+			"suggestion": prop("string", "Optional replacement code for the target line, rendered as a 1-click Gitea suggestion block without markdown fences"),
 		}, []string{"path", "line", "body"}),
 		func(ctx context.Context, raw string) (string, error) {
 			var args struct {
-				Path     string `json:"path"`
-				Line     int64  `json:"line"`
-				Severity string `json:"severity"`
-				Body     string `json:"body"`
+				Path       string `json:"path"`
+				Line       int64  `json:"line"`
+				Severity   string `json:"severity"`
+				Body       string `json:"body"`
+				Suggestion string `json:"suggestion"`
 			}
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
 				return "", err
@@ -181,6 +183,9 @@ func NewRegistry(p Params) *Registry {
 			body := args.Body
 			if args.Severity != "" {
 				body = fmt.Sprintf("**[%s]** %s", strings.ToUpper(args.Severity), body)
+			}
+			if sug := stripCodeFences(args.Suggestion); sug != "" {
+				body = fmt.Sprintf("%s\n\n```suggestion\n%s\n```", body, sug)
 			}
 			reg.State.mu.Lock()
 			reg.State.InlineComments = append(reg.State.InlineComments, gitea.ReviewComment{
@@ -419,6 +424,24 @@ func prop(typ, desc string) map[string]any {
 		"type":        typ,
 		"description": desc,
 	}
+}
+
+func stripCodeFences(s string) string {
+	s = strings.TrimRight(s, "\r\n")
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		if nl := strings.Index(trimmed, "\n"); nl != -1 {
+			trimmed = trimmed[nl+1:]
+		}
+		if idx := strings.LastIndex(trimmed, "```"); idx != -1 {
+			trimmed = trimmed[:idx]
+		}
+		return strings.TrimRight(trimmed, "\r\n")
+	}
+	return s
 }
 
 func sliceLines(text string, offset, limit, defaultLimit int) string {

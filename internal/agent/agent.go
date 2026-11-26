@@ -124,12 +124,17 @@ Workflow:
 1. Inspect the PR diff using get_pr_diff.
 2. When you need surrounding context, callers, or tests, use read_file or search_code on the PR worktree.
 3. Focus on real bugs, security vulnerabilities, race conditions, resource leaks, and maintainability issues. Avoid nitpicking formatting.
-4. For each concrete issue on a changed line, call add_inline_comment with exact file path and new line number.
+4. For each concrete issue on a changed line, call add_inline_comment with exact file path and new line number. When a fix is straightforward, include the replacement code in the suggestion parameter so the author can apply it in one click.
 5. Finish by calling submit_review (for PR reviews) or reply_comment (for @mention questions).
 `)
 	if skillSection := skills.FormatPrompt(r.opts.Skills); skillSection != "" {
 		b.WriteString("\n")
 		b.WriteString(skillSection)
+	}
+	if strings.TrimSpace(trigger.RepoInstructions) != "" {
+		b.WriteString("\n## Repository Instructions\n")
+		b.WriteString(strings.TrimSpace(trigger.RepoInstructions))
+		b.WriteString("\n")
 	}
 	if trigger.Kind == "comment_reply" {
 		b.WriteString("\nThis run was triggered by a user @mention comment. Answer their question or request directly and finish with reply_comment.\n")

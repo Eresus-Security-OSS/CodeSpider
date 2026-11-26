@@ -57,3 +57,30 @@ func TestWriteAndEditFileWithGuardrails(t *testing.T) {
 		t.Fatal("expected error on path traversal")
 	}
 }
+
+func TestAddInlineCommentWithSuggestion(t *testing.T) {
+	reg := NewRegistry(Params{WorktreeDir: t.TempDir()})
+	out, err := reg.Execute(context.Background(), "add_inline_comment", `{
+		"path": "main.go",
+		"line": 12,
+		"severity": "warning",
+		"body": "Check returned error",
+		"suggestion": "if err := run(); err != nil {\n\treturn err\n}"
+	}`)
+	if err != nil {
+		t.Fatalf("add_inline_comment failed: %v", err)
+	}
+	if !strings.Contains(out, "main.go:12") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	if len(reg.State.InlineComments) != 1 {
+		t.Fatalf("expected 1 inline comment, got %d", len(reg.State.InlineComments))
+	}
+	body := reg.State.InlineComments[0].Body
+	if !strings.Contains(body, "**[WARNING]** Check returned error") {
+		t.Fatalf("missing severity/body in comment: %s", body)
+	}
+	if !strings.Contains(body, "```suggestion\nif err := run(); err != nil {\n\treturn err\n}\n```") {
+		t.Fatalf("missing suggestion block in comment:\n%s", body)
+	}
+}
