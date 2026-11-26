@@ -1,0 +1,23 @@
+# Feature Maturity Matrix
+
+Classification scale: **Missing** | **Prototype** | **Partially implemented** | **Implemented** | **Integration tested** | **Production validated**.
+
+Never equate compilation or mocked unit tests with production validation. Where live external infrastructure (live Gitea binary/container or live Docker/Podman daemon) was unavailable on the validation host, items are explicitly capped at **Integration tested** or **Implemented** and marked **Blocked** for live validation.
+
+| Subsystem / Feature | Maturity State | Evidence & Verification | Known Gaps / Blockers |
+| --- | --- | --- | --- |
+| Webhook HMAC-SHA256 & Draft/Bot Filtering | **Integration tested** | `internal/gitea/webhook_test.go`, `internal/worker/integration_test.go` | Live Gitea instance webhook delivery not run on this host (**Blocked**: `gitea` binary not installed). |
+| Git Mirroring, Worktree Isolation & Atomic Push | **Integration tested** | `internal/workspace/workspace_test.go`, `internal/worker/integration_test.go` (`git-http-backend` Smart-HTTP) | Uses `--atomic --force-with-lease=<branch>:<sha>` and hook/filter/submodule/ext-diff lockdown (`core.hooksPath=/dev/null`). |
+| Capability Auth & Fail-Closed Policy | **Implemented** | `internal/policy/policy_test.go` | Fork PR isolation, `DryRun` side-effect stripping, `CheckSideEffectAllowed` on every mutation site. |
+| Expiring Sessions, CSRF & SSE Redaction | **Integration tested** | `cmd/codespider/main_test.go`, `internal/security/redact_test.go` | 12h HMAC-signed expiring cookies, `X-CSRF-Token` + `Origin`/`Sec-Fetch-Site`, `security.RedactText` on SSE. |
+| Go AST / Type / Interface / Generic / Build-Tag Indexer | **Implemented** | `internal/codeintel/codeintel_test.go` | External third-party modules without `.a` archives tracked in `UnresolvedImports`. |
+| Polyglot Language Analyzers (`Go`, `Python`, `TS/JS`, `Rust`) | **Implemented** | `internal/lang/lang_test.go` | Python uses isolated `python3 -I -S ast.parse`; TS uses `node` + `typescript` when available with structural fallback; Rust is structural-only (no macro expansion). |
+| Semantic Diff Engine & Hunk Pruning | **Implemented** | `internal/semdiff/semdiff_test.go` | AST body-hash rename/move/equivalent-refactor detection for Go; comment-hunk pruning for all languages. |
+| Deep Deterministic Analysis (AST Guards + Go CFG/DataFlow) | **Implemented** | `internal/analysis/cfg_dataflow_test.go`, `internal/analysis/analysis_test.go` | Comment/string removal no longer triggers `CS-INV-001`; intraprocedural CFG covers resource leaks, lock-without-unlock, lock-across-I/O, context cancel leaks, SQL `tx.Rollback()`. |
+| Staged Orchestration & Deterministic Finding Consolidation | **Integration tested** | `internal/worker/integration_test.go`, `internal/tools/tools.go` | `FlushReview` consolidates `StateStaticallySupported` findings, verifies post-LLM head SHA, and enforces `CheckSideEffectAllowed`. |
+| Proof-of-Bug Differential Container Lab | **Integration tested** | `internal/sandbox/lab_test.go`, `internal/sandbox/executor_test.go` | Verified with mock container runtime script (`:ro` mount, `/work` tmpfs, compile-error vs regression, flake repeat, candidate patch). Live Docker/Podman daemon execution **Blocked** (no daemon running on host). |
+| Cross-Repo Org Graph & Speculative Merge Check | **Implemented** | `internal/orggraph/graph_test.go` | Verified vs. inferred edges, strict `CapCrossRepoRead` ACLs, disposable detached-worktree speculative merge check. |
+| Ops Telemetry Correlator (`opsintel`) | **Implemented** | `internal/opsintel/correlator_test.go` | Secret/PII redaction on load; `allow_llm_telemetry_sharing: false` by default. |
+| Split Benchmarks with 95% Wilson CIs | **Integration tested** | `internal/benchmark/harness_test.go`, `testdata/benchmarks/{dev,validation,holdout}.jsonl` | 60 local split cases (20 dev / 20 validation / 20 holdout) with zero leakage; external 1,400-case datasets supported via JSONL loader. |
+| Review Operations Console & REST APIs | **Integration tested** | `cmd/codespider/main_test.go`, `cmd/codespider/dashboard.go`, `cmd/codespider/api.go` | Tabbed accessible UI backed by `/api/reviews`, `/api/org-graph`, `/api/languages`, `/api/audit`, `/api/benchmarks`, `/api/replay`. |
+| Live Gitea + Docker Compose Deployment | **Blocked** | Config validated earlier; host lacks running Docker daemon and `gitea` binary | See `docs/production-validation.md` for exact CI validation commands. |

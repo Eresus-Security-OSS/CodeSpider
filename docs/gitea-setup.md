@@ -33,5 +33,12 @@ go build -o codespider ./cmd/codespider
 
 ## 4. Usage
 - **Automatic:** Open or push to a PR in Gitea. CodeSpider sets commit status `codespider/review` to `pending`, inspects the diff and repo context, and submits inline comments + a summary.
-- **Interactive:** Comment `@codespider <question or request>` on any PR to ask for explanations, security checks, or follow-up analysis.
-- **Health & Status:** Check `GET /healthz`, `GET /readyz`, or `GET /status` for active jobs and recent runs.
+- **Interactive:** Comment `@codespider <question>` on any PR (or directly inside an inline code review thread), or use slash commands:
+  - `@codespider /review` — Force a fresh review on the current commit.
+  - `@codespider /redteam` — Run an adversarial Red-Team/Blue-Team security audit.
+  - `@codespider /summary` — Generate a structured PR walkthrough.
+  - `@codespider /ci` — Diagnose failing CI / commit status checks.
+  - `@codespider /fix <instructions>` — Propose (or commit in write mode for collaborators) targeted fixes.
+  - `@codespider /help` — Display available commands.
+- **One-Shot CLI Mode:** `./codespider review -f codespider.yaml --dry-run owner/repo#12`
+- **Health, Metrics, SSE & Playground:** Check `GET /healthz`, `GET /readyz`, `GET /status`, `GET /metrics` (Prometheus), `GET /events` (SSE stream), or open `GET /` (`/dashboard`) for the live UI and Dry-Run Playground. Send `SIGHUP` to hot-reload skills and budgets without restarting.

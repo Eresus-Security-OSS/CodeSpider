@@ -14,30 +14,33 @@ WebhookHandler (internal/gitea)
    ▼
 Worker Pool (internal/worker)
    │  - Deduplicates already-reviewed SHAs (internal/store)
+   │  - Periodically reconciles open PRs to recover missed webhooks
    │  - Cancels superseded runs when new commits arrive on the same PR
    │  - Checks out ephemeral git worktree at head SHA (internal/workspace)
+   │  - Computes incremental commit diffs when a prior SHA was reviewed
    │  - Loads AGENTS.md / .codespider.yaml & filters ignore_paths (internal/repoconfig)
    ▼
 Agent Loop (internal/agent + internal/llm + internal/skills)
-   │  - Loads skills (e.g. security, code-quality) + repo instructions
-   │  - Calls OpenAI-compatible LLM with tool definitions
-   │  - Executes read_file / search_code / get_pr_diff / add_inline_comment (with 1-click suggestions)
-   │  - Enforces step budget, token budget, and duplicate-call guard
+   │  - Loads skills (e.g. security, code-quality, performance, concurrency) + repo instructions
+   │  - Calls OpenAI-compatible LLM with retry/backoff and tool definitions
+   │  - Executes read_file / search_code / list_files / get_pr_diff / get_incremental_diff / add_inline_comment (with 1-click suggestions)
+   │  - Enforces step budget, token budget, severity gate, and duplicate-call guard
    ▼
 Gitea REST API (internal/gitea)
-   └─ Posts PR summary + inline comments + commit status
+   └─ Posts PR summary + inline comments + 👀 reactions + commit status
 ```
 
 ## Key Packages
 
-- `cmd/codespider`: Daemon entrypoint (`/webhook`, `/healthz`, `/readyz`, `/status`, graceful `SIGTERM` shutdown).
+- `cmd/codespider`: Daemon entrypoint (`/webhook`, `/healthz`, `/readyz`, `/status`, `/metrics`, `/` dashboard, graceful `SIGTERM` shutdown).
 - `internal/config`: YAML configuration (`codespider.yaml`, `-f`, `CODESPIDER_CONFIG_PATH`) and validation.
-- `internal/gitea`: Webhook HMAC verification, event normalization, and Gitea v1 REST client.
-- `internal/workspace`: Bare git mirror cache and isolated per-PR worktrees with path-traversal protection.
-- `internal/llm`: OpenAI-compatible `/chat/completions` client with tool-calling support.
+- `internal/gitea`: Webhook HMAC verification, slash-command parsing (`/review`, `/summary`, `/fix`, `/help`), event normalization, and Gitea v1 REST client.
+- `internal/workspace`: Bare git mirror cache, isolated per-PR worktrees, symlink-safe path resolution, and secret redaction.
+- `internal/llm`: OpenAI-compatible `/chat/completions` client with retry/backoff and tool-calling support.
 - `internal/skills`: Loads `SKILL.md` modules into the agent's system prompt.
-- `internal/repoconfig`: Loads per-repo `AGENTS.md`, review instruction files, and `.codespider.yaml` (`enabled`, `ignore_paths`, `instructions`).
-- `internal/tools`: Sandboxed read-only codebase tools and Gitea review/reply tools.
-- `internal/agent`: Autonomous tool-calling loop with step/token/loop guardrails.
+- `internal/repoconfig`: Loads per-repo `AGENTS.md`, review instruction files, and `.codespider.yaml` (`enabled`, `min_severity`, `skills`, `ignore_paths`, `instructions`).
+- `internal/tools`: Sandboxed codebase tools, line-annotated diffs, severity filtering, and Gitea review/reply tools.
+- `internal/agent`: Autonomous tool-calling loop with step/token/loop guardrails and budget-exhaustion auto-submission.
+- `internal/metrics`: Thread-safe counters and Prometheus/JSON metric snapshots.
 - `internal/store`: Atomic JSON persistence (`data/state.json`) for reviewed SHAs and recent run history.
-- `internal/worker`: Concurrent worker pool with per-PR cancellation and status reporting.
+- `internal/worker`: Concurrent worker pool with per-PR cancellation, periodic reconciler, and status reporting.

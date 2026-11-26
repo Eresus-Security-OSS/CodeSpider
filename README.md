@@ -68,17 +68,15 @@ flowchart TD
 
 | Feature | Description |
 | :--- | :--- |
-| **Continuous Reviews** | Automatically reviews new and updated pull requests. |
-| **Agentic Exploration** | Inspects diffs, reads files, searches code, and examines PR comments. |
-| **Interactive Replies** | Mention `@codespider` to ask questions directly in PR threads. |
-| **Review Skills** | Extensible `SKILL.md` modules for specialized reviews. |
-| **Repository Instructions** | Supports repository-native review policies and configuration. |
-| **One-Click Suggestions** | Posts Gitea suggestion blocks for actionable fixes. |
-| **Smart Filtering** | Skips drafts, bot-authored PRs, and ignored paths. |
-| **Optional Write Mode** | Allows the agent to edit files, commit, and push changes. |
-| **LLM Flexibility** | Supports any compatible chat completions endpoint with tool calling. |
-| **Execution Guardrails** | Deduplication, cancellation, token budgets, and step limits. |
-| **Observability** | Dedicated health, readiness, and status endpoints. |
+| **Continuous Reviews** | Automatically reviews new and updated pull requests, with periodic reconciliation for missed webhooks. |
+| **Deterministic Code Intel** | Go AST/`go/types` indexing, API contract diffing, import-cycle & fitness checks, SQL migration/rollback, and IaC/dependency analysis. |
+| **Cross-Repo Blast Radius** | Searches permitted bare mirrors (`search_org_repos`) with fork isolation and owner/repo allowlists. |
+| **Evidence State Machine** | Replaces vague labels with explicit states (`statically_supported`, `model_corroborated`, `differentially_reproduced`, `inconclusive`, `refuted`). |
+| **Git Forensics & Secret Hunt** | Inspects `git log -L` for prior bugfix/security regressions and scans intermediate commits for deleted-before-HEAD secrets. |
+| **Capability Security & Audit** | Fail-closed tool permissions, base-branch trusted `.codespider.yaml`, origin-pinned git auth, container-only PoC sandbox, and `audit.jsonl`. |
+| **Review Memory & SARIF** | Authorized feedback suppression, incident-aware context, policy simulation, and SARIF 2.1.0 export (`--sarif`). |
+| **Interactive Commands** | Mention `@codespider` with `/review`, `/redteam`, `/summary`, `/ci`, `/fix`, `/help`, or ask questions in PR/inline threads. |
+| **Observability, CLI & Bench** | `codespider review`, `codespider bench`, `codespider healthcheck`, SSE `/events`, Dry-Run Playground, Prometheus `/metrics`, and `SIGHUP` reload. |
 
 ## Review Skills
 
@@ -90,6 +88,9 @@ agent's investigation.
 | [Security](skills/security/SKILL.md) | Security vulnerabilities and unsafe implementation patterns. |
 | [Code Quality](skills/code-quality/SKILL.md) | Maintainability, correctness, and implementation quality. |
 | [Testing](skills/testing/SKILL.md) | Test coverage, missing test cases, and regression risks. |
+| [Performance](skills/performance/SKILL.md) | N+1 I/O, unbounded memory growth, hot-path allocations, and lock contention. |
+| [Concurrency](skills/concurrency/SKILL.md) | Data races, goroutine leaks, deadlocks, and state safety. |
+| [Chaos Resilience](skills/chaos-resilience/SKILL.md) | Failure-mode tracing, timeout propagation, lock contention across I/O, and idempotency. |
 
 Skills can be combined with repository-specific instructions:
 
@@ -170,7 +171,11 @@ DOCKER_BUILDKIT=1 docker compose \
 | POST | `/webhook` | Receives Gitea webhook events. |
 | GET | `/healthz` | Process health. |
 | GET | `/readyz` | Service readiness. |
-| GET | `/status` | Service status. |
+| GET | `/status` | Service status and metrics JSON. |
+| GET | `/metrics` | Prometheus metrics exposition. |
+| GET | `/events` | Real-time SSE agent activity stream. |
+| POST | `/api/dry-run` | Run a dry-run PR review without mutating Gitea. |
+| GET | `/` | Live web dashboard and Dry-Run Playground (`/dashboard`). |
 
 Webhook requests are authenticated using HMAC-SHA256
 verification through `X-Gitea-Signature`.
@@ -206,10 +211,18 @@ When enabled, the agent can use:
 
 | Tool | Purpose |
 | :--- | :--- |
-| `get_pr_diff` | Inspect pull request changes. |
+| `get_pr_diff` | Inspect line-annotated pull request changes. |
+| `get_incremental_diff` | Inspect changes since the last reviewed commit. |
+| `search_org_repos` | Search across other cached organization repository mirrors. |
+| `git_forensics` | Inspect commit history (`git log -L`) for prior fix/security regressions. |
+| `inspect_go_symbols` | Parse Go AST symbols and line ranges. |
+| `get_ci_status` | Fetch combined CI / commit status checks for the PR. |
 | `read_file` | Read surrounding source code. |
 | `search_code` | Search the checked-out codebase. |
+| `list_files` | List repository files in the PR worktree. |
 | `list_pr_comments` | Retrieve existing review discussions. |
+| `list_pr_reviews` | Retrieve formal PR reviews. |
+| `run_proof_test` | Run isolated `go test -race` proof-of-bug tests (opt-in). |
 | `write_file` | Write files in opt-in write mode. |
 | `edit_file` | Edit files in opt-in write mode. |
 | `commit_and_push` | Commit and push changes in opt-in write mode. |
