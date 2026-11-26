@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,9 +24,13 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadFromEnv()
+	configFlag := flag.String("f", "", "Path to codespider.yaml config file (overrides CODESPIDER_CONFIG_PATH)")
+	flag.Parse()
+
+	cfgPath := config.ResolvePath(*configFlag)
+	cfg, err := config.LoadFromFile(cfgPath)
 	if err != nil {
-		slog.Error("configuration error", "err", err)
+		slog.Error("configuration error", "path", cfgPath, "err", err)
 		os.Exit(1)
 	}
 
