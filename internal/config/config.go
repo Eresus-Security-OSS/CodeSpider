@@ -54,7 +54,7 @@ func LoadFromEnv() (Config, error) {
 		AgentMaxSteps:      getEnvInt("AGENT_MAX_STEPS", 12),
 		AgentMaxTokens:     getEnvInt("AGENT_MAX_TOKENS_PER_RUN", 32000),
 		AgentSkillsDir:     getEnv("AGENT_SKILLS_DIR", "./skills"),
-		AgentDefaultSkills: splitCSV(getEnv("AGENT_DEFAULT_SKILLS", "security,code-quality")),
+		AgentDefaultSkills: splitCSV(getEnv("AGENT_DEFAULT_SKILLS", "security,code-quality,testing")),
 		AgentEnableWrite:   getEnvBool("AGENT_ENABLE_WRITE", false),
 		DataDir:            getEnv("DATA_DIR", "./data"),
 		Workers:            getEnvInt("WORKERS", 2),
