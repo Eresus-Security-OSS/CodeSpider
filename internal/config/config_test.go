@@ -14,20 +14,28 @@ func TestLoadFromFile(t *testing.T) {
 	yamlContent := `
 server:
   listen_addr: ":9090"
+  admin_token: "adm-secret"
 
 gitea:
   base_url: "https://gitea.internal/"
   token: "gt-token-123"
   webhook_secret: "wh-sec"
   bot_username: "spiderbot"
+  repos:
+    - acme/api
+    - acme/web
   skip_draft_prs: false
   ignore_bot_prs: true
+  sticky_summary: false
+  require_collaborator_for_fix: true
 
 llm:
   base_url: "https://litellm.internal/v1/"
   api_key: "${TEST_LLM_KEY}"
   model: "claude-sonnet"
+  fast_model: "gpt-4o-mini"
   timeout_seconds: 60
+  max_retries: 4
 
 agent:
   max_steps: 20
@@ -37,6 +45,11 @@ agent:
     - security
     - testing
   enable_write: true
+  adversarial_security: false
+  enable_proof_of_bug: true
+
+alert:
+  webhook_url: "https://hooks.slack.com/services/T/B/X"
 
 daemon:
   data_dir: "/var/lib/codespider"
@@ -54,17 +67,20 @@ daemon:
 		t.Fatalf("LoadFromFile failed: %v", err)
 	}
 
-	if cfg.ListenAddr != ":9090" {
-		t.Fatalf("unexpected ListenAddr: %q", cfg.ListenAddr)
+	if cfg.ListenAddr != ":9090" || cfg.AdminToken != "adm-secret" {
+		t.Fatalf("unexpected server config: %q %q", cfg.ListenAddr, cfg.AdminToken)
 	}
-	if cfg.GiteaBaseURL != "https://gitea.internal" || cfg.GiteaToken != "gt-token-123" || cfg.SkipDraftPRs {
+	if cfg.GiteaBaseURL != "https://gitea.internal" || cfg.GiteaToken != "gt-token-123" || cfg.SkipDraftPRs || cfg.StickySummary || !cfg.RequireCollaboratorForFix {
 		t.Fatalf("unexpected gitea config: %+v", cfg)
 	}
-	if cfg.LLMBaseURL != "https://litellm.internal/v1" || cfg.LLMAPIKey != "sk-env-secret" || cfg.LLMModel != "claude-sonnet" || cfg.LLMTimeout != 60*time.Second {
+	if len(cfg.GiteaRepos) != 2 || cfg.GiteaRepos[0] != "acme/api" || cfg.GiteaRepos[1] != "acme/web" {
+		t.Fatalf("unexpected gitea.repos: %#v", cfg.GiteaRepos)
+	}
+	if cfg.LLMBaseURL != "https://litellm.internal/v1" || cfg.LLMAPIKey != "sk-env-secret" || cfg.LLMModel != "claude-sonnet" || cfg.LLMFastModel != "gpt-4o-mini" || cfg.LLMTimeout != 60*time.Second || cfg.LLMMaxRetries != 4 {
 		t.Fatalf("unexpected llm config: %+v", cfg)
 	}
-	if cfg.AgentMaxSteps != 20 || cfg.AgentMaxTokens != 64000 || !cfg.AgentEnableWrite {
-		t.Fatalf("unexpected agent config: %+v", cfg)
+	if cfg.AgentMaxSteps != 20 || cfg.AgentMaxTokens != 64000 || !cfg.AgentEnableWrite || cfg.AgentAdversarialSecurity || !cfg.AgentEnableProofOfBug || cfg.AlertWebhookURL == "" {
+		t.Fatalf("unexpected agent/alert config: %+v", cfg)
 	}
 	if len(cfg.AgentDefaultSkills) != 2 || cfg.AgentDefaultSkills[0] != "security" || cfg.AgentDefaultSkills[1] != "testing" {
 		t.Fatalf("unexpected default skills: %#v", cfg.AgentDefaultSkills)

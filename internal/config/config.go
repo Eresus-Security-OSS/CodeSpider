@@ -13,49 +13,77 @@ import (
 // Config holds all configuration for the 24/7 CodeSpider daemon.
 type Config struct {
 	ListenAddr string
+	AdminToken string
 
-	GiteaBaseURL       string
-	GiteaToken         string
-	GiteaWebhookSecret string
-	GiteaBotUsername   string
-	SkipDraftPRs       bool
-	IgnoreBotPRs       bool
+	GiteaBaseURL              string
+	GiteaToken                string
+	GiteaWebhookSecret        string
+	GiteaBotUsername          string
+	GiteaRepos                []string
+	AllowUnsignedWebhooks     bool
+	AllowSameOwnerCrossRepo   bool
+	CrossRepoAllowlist        []string
+	SkipDraftPRs              bool
+	IgnoreBotPRs              bool
+	StickySummary             bool
+	RequireCollaboratorForFix bool
 
-	LLMBaseURL string
-	LLMAPIKey  string
-	LLMModel   string
-	LLMTimeout time.Duration
+	LLMBaseURL    string
+	LLMAPIKey     string
+	LLMModel      string
+	LLMFastModel  string
+	LLMTimeout    time.Duration
+	LLMMaxRetries int
 
-	AgentMaxSteps      int
-	AgentMaxTokens     int
-	AgentSkillsDir     string
-	AgentDefaultSkills []string
-	AgentEnableWrite   bool
-	DataDir            string
-	Workers            int
-	ReconcileInterval  time.Duration
-	LogLevel           string
+	AgentMaxSteps             int
+	AgentMaxTokens            int
+	AgentSkillsDir            string
+	AgentDefaultSkills        []string
+	AgentEnableWrite          bool
+	AgentAdversarialSecurity  bool
+	AgentEnableProofOfBug     bool
+	SandboxMode               string
+	SandboxRuntime            string
+	SandboxImage              string
+	SandboxRequireImageDigest bool
+	OpsTelemetryPath          string
+	AllowLLMTelemetrySharing  bool
+	AlertWebhookURL           string
+	DataDir                   string
+	Workers                   int
+	ReconcileInterval         time.Duration
+	LogLevel                  string
 }
 
 // Default returns a Config populated with default values.
 func Default() Config {
 	return Config{
-		ListenAddr:         ":8080",
-		GiteaBotUsername:   "codespider",
-		SkipDraftPRs:       true,
-		IgnoreBotPRs:       true,
-		LLMBaseURL:         "https://api.openai.com/v1",
-		LLMModel:           "gpt-5",
-		LLMTimeout:         120 * time.Second,
-		AgentMaxSteps:      12,
-		AgentMaxTokens:     32000,
-		AgentSkillsDir:     "./skills",
-		AgentDefaultSkills: []string{"security", "code-quality", "testing"},
-		AgentEnableWrite:   false,
-		DataDir:            "./data",
-		Workers:            2,
-		ReconcileInterval:  300 * time.Second,
-		LogLevel:           "info",
+		ListenAddr:                ":8080",
+		GiteaBotUsername:          "codespider",
+		AllowUnsignedWebhooks:     false,
+		AllowSameOwnerCrossRepo:   false,
+		SkipDraftPRs:              true,
+		IgnoreBotPRs:              true,
+		StickySummary:             true,
+		RequireCollaboratorForFix: true,
+		LLMBaseURL:                "https://api.openai.com/v1",
+		LLMModel:                  "gpt-5",
+		LLMTimeout:                120 * time.Second,
+		LLMMaxRetries:             2,
+		AgentMaxSteps:             12,
+		AgentMaxTokens:            32000,
+		AgentSkillsDir:            "./skills",
+		AgentDefaultSkills:        []string{"security", "code-quality", "testing"},
+		AgentEnableWrite:          false,
+		AgentAdversarialSecurity:  true,
+		AgentEnableProofOfBug:     false,
+		SandboxMode:               "disabled",
+		SandboxRuntime:            "docker",
+		SandboxImage:              "golang:1.26-trixie",
+		DataDir:                   "./data",
+		Workers:                   2,
+		ReconcileInterval:         300 * time.Second,
+		LogLevel:                  "info",
 	}
 }
 
@@ -113,6 +141,9 @@ func (c Config) Validate() error {
 	if c.LLMModel == "" {
 		errs = append(errs, errors.New("llm.model is required"))
 	}
+	if c.LLMMaxRetries < 0 {
+		errs = append(errs, fmt.Errorf("llm.max_retries must be >= 0, got %d", c.LLMMaxRetries))
+	}
 	if c.Workers < 1 {
 		errs = append(errs, fmt.Errorf("daemon.workers must be >= 1, got %d", c.Workers))
 	}
@@ -127,6 +158,8 @@ func parseYAML(content string, cfg *Config) error {
 	section := ""
 	inListKey := ""
 	defaultSkillsCleared := false
+	giteaReposCleared := false
+	crossRepoCleared := false
 
 	for lineNo, rawLine := range lines {
 		cleaned := stripComment(rawLine)
@@ -139,7 +172,8 @@ func parseYAML(content string, cfg *Config) error {
 
 		// List item under current section/key (e.g. "    - security")
 		if strings.HasPrefix(trimmed, "- ") {
-			if inListKey == "agent.default_skills" {
+			switch inListKey {
+			case "agent.default_skills":
 				if !defaultSkillsCleared {
 					cfg.AgentDefaultSkills = nil
 					defaultSkillsCleared = true
@@ -147,6 +181,26 @@ func parseYAML(content string, cfg *Config) error {
 				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
 				if item != "" {
 					cfg.AgentDefaultSkills = append(cfg.AgentDefaultSkills, item)
+				}
+				continue
+			case "gitea.repos":
+				if !giteaReposCleared {
+					cfg.GiteaRepos = nil
+					giteaReposCleared = true
+				}
+				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				if item != "" {
+					cfg.GiteaRepos = append(cfg.GiteaRepos, item)
+				}
+				continue
+			case "gitea.cross_repo_allowlist":
+				if !crossRepoCleared {
+					cfg.CrossRepoAllowlist = nil
+					crossRepoCleared = true
+				}
+				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				if item != "" {
+					cfg.CrossRepoAllowlist = append(cfg.CrossRepoAllowlist, item)
 				}
 				continue
 			}
@@ -176,11 +230,24 @@ func parseYAML(content string, cfg *Config) error {
 		}
 
 		if val == "" {
-			if fullKey == "agent.default_skills" {
+			switch fullKey {
+			case "agent.default_skills":
 				inListKey = fullKey
 				if !defaultSkillsCleared {
 					cfg.AgentDefaultSkills = nil
 					defaultSkillsCleared = true
+				}
+			case "gitea.repos":
+				inListKey = fullKey
+				if !giteaReposCleared {
+					cfg.GiteaRepos = nil
+					giteaReposCleared = true
+				}
+			case "gitea.cross_repo_allowlist":
+				inListKey = fullKey
+				if !crossRepoCleared {
+					cfg.CrossRepoAllowlist = nil
+					crossRepoCleared = true
 				}
 			}
 			continue
@@ -198,6 +265,8 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 	switch fullKey {
 	case "server.listen_addr", "listen_addr":
 		cfg.ListenAddr = val
+	case "server.admin_token", "admin_token":
+		cfg.AdminToken = val
 	case "gitea.base_url":
 		cfg.GiteaBaseURL = val
 	case "gitea.token":
@@ -206,6 +275,22 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 		cfg.GiteaWebhookSecret = val
 	case "gitea.bot_username":
 		cfg.GiteaBotUsername = val
+	case "gitea.repos":
+		cfg.GiteaRepos = parseInlineList(rawVal)
+	case "gitea.allow_unsigned_webhooks":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.AllowUnsignedWebhooks = b
+	case "gitea.allow_same_owner_cross_repo":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.AllowSameOwnerCrossRepo = b
+	case "gitea.cross_repo_allowlist":
+		cfg.CrossRepoAllowlist = parseInlineList(rawVal)
 	case "gitea.skip_draft_prs":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
@@ -218,18 +303,38 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 			return err
 		}
 		cfg.IgnoreBotPRs = b
+	case "gitea.sticky_summary":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.StickySummary = b
+	case "gitea.require_collaborator_for_fix":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.RequireCollaboratorForFix = b
 	case "llm.base_url":
 		cfg.LLMBaseURL = val
 	case "llm.api_key":
 		cfg.LLMAPIKey = val
 	case "llm.model":
 		cfg.LLMModel = val
+	case "llm.fast_model":
+		cfg.LLMFastModel = val
 	case "llm.timeout_seconds":
 		n, err := strconv.Atoi(val)
 		if err != nil {
 			return err
 		}
 		cfg.LLMTimeout = time.Duration(n) * time.Second
+	case "llm.max_retries":
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return err
+		}
+		cfg.LLMMaxRetries = n
 	case "agent.max_steps":
 		n, err := strconv.Atoi(val)
 		if err != nil {
@@ -252,6 +357,40 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 			return err
 		}
 		cfg.AgentEnableWrite = b
+	case "agent.adversarial_security":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.AgentAdversarialSecurity = b
+	case "agent.enable_proof_of_bug":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.AgentEnableProofOfBug = b
+	case "sandbox.mode":
+		cfg.SandboxMode = strings.ToLower(val)
+	case "sandbox.runtime":
+		cfg.SandboxRuntime = strings.ToLower(val)
+	case "sandbox.image":
+		cfg.SandboxImage = val
+	case "sandbox.require_image_digest":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.SandboxRequireImageDigest = b
+	case "ops.telemetry_file":
+		cfg.OpsTelemetryPath = val
+	case "ops.allow_llm_telemetry_sharing":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.AllowLLMTelemetrySharing = b
+	case "alert.webhook_url":
+		cfg.AlertWebhookURL = val
 	case "daemon.data_dir", "data_dir":
 		cfg.DataDir = val
 	case "daemon.workers", "workers":

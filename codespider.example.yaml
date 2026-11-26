@@ -9,20 +9,34 @@
 
 server:
   listen_addr: ":8080"
+  # Optional: protect /, /status, /metrics, /events, and /api/dry-run
+  # admin_token: "${CODESPIDER_ADMIN_TOKEN}"
 
 gitea:
   base_url: "https://gitea.example.com"
   token: "replace-with-gitea-bot-token"
   webhook_secret: "replace-with-webhook-hmac-secret"
   bot_username: "codespider"
+  # Optional: restrict periodic reconciliation to specific owner/repo slugs.
+  # Leave unset to auto-discover repositories accessible to the bot token.
+  # repos:
+  #   - my-org/my-repo
   skip_draft_prs: true
   ignore_bot_prs: true
+  sticky_summary: true
+  require_collaborator_for_fix: true
+  allow_unsigned_webhooks: false
+  allow_same_owner_cross_repo: false
+  # cross_repo_allowlist:
+  #   - my-org/shared-contracts
 
 llm:
   base_url: "https://api.openai.com/v1"
   api_key: "replace-with-llm-api-key"
   model: "gpt-5"
+  # fast_model: "gpt-5-mini"
   timeout_seconds: 120
+  max_retries: 2
 
 agent:
   max_steps: 12
@@ -32,7 +46,20 @@ agent:
     - security
     - code-quality
     - testing
+    # - performance
+    # - concurrency
+    # - chaos-resilience
   enable_write: false
+  adversarial_security: true
+  enable_proof_of_bug: false
+
+sandbox:
+  mode: "disabled" # set to "container" to enable isolated container PoC testing
+  runtime: "docker"
+  image: "golang:1.26-trixie"
+
+# alert:
+#   webhook_url: "${CODESPIDER_ALERT_WEBHOOK_URL}"
 
 daemon:
   data_dir: "./data"
