@@ -52,5 +52,7 @@ EXPOSE 8080
 
 USER nonroot:nonroot
 
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["/app/codespider", "healthcheck"]
+
 ENTRYPOINT ["/app/codespider"]
 CMD ["-f", "/app/codespider.yaml"]
