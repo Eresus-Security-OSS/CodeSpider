@@ -18,7 +18,7 @@ CodeSpider is configured via environment variables (see [`.env.example`](../.env
 | `AGENT_MAX_STEPS` | `12` | No | Max tool-calling turns per PR run |
 | `AGENT_MAX_TOKENS_PER_RUN` | `32000` | No | Token budget cap per PR run |
 | `AGENT_SKILLS_DIR` | `./skills` | No | Directory containing `<skill>/SKILL.md` folders |
-| `AGENT_DEFAULT_SKILLS` | `security,code-quality` | No | Comma-separated list of skills loaded into the agent |
+| `AGENT_DEFAULT_SKILLS` | `security,code-quality,testing` | No | Comma-separated list of skills loaded into the agent |
 | `AGENT_ENABLE_WRITE` | `false` | No | Enables `write_file`, `edit_file`, and `commit_and_push` tools |
 | `DATA_DIR` | `./data` | No | Directory for git mirrors, worktrees, and `state.json` |
 | `WORKERS` | `2` | No | Number of concurrent PR review workers |
