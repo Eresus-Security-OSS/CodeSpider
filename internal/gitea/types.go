@@ -61,12 +61,12 @@ type Repository struct {
 
 // Issue models a Gitea issue or PR summary object inside comment webhooks.
 type Issue struct {
-	ID          int64        `json:"id"`
-	Number      int64        `json:"number"`
-	Title       string       `json:"title"`
-	Body        string       `json:"body"`
-	State       string       `json:"state"`
-	PullRequest *PullMarker  `json:"pull_request,omitempty"`
+	ID          int64       `json:"id"`
+	Number      int64       `json:"number"`
+	Title       string      `json:"title"`
+	Body        string      `json:"body"`
+	State       string      `json:"state"`
+	PullRequest *PullMarker `json:"pull_request,omitempty"`
 }
 
 // PullMarker is non-nil when an Issue is a Pull Request.
@@ -105,4 +105,49 @@ type CreateReviewRequest struct {
 	Body     string          `json:"body"`
 	Event    string          `json:"event"` // COMMENT, APPROVE, REQUEST_CHANGES
 	Comments []ReviewComment `json:"comments,omitempty"`
+}
+
+// PullReview represents an existing PR review returned by Gitea.
+type PullReview struct {
+	ID          int64     `json:"id"`
+	State       string    `json:"state"`
+	Body        string    `json:"body"`
+	CommitID    string    `json:"commit_id"`
+	User        User      `json:"user"`
+	SubmittedAt time.Time `json:"submitted_at"`
+}
+
+// PullReviewCommentEvent represents a Gitea pull_request_review_comment webhook payload.
+type PullReviewCommentEvent struct {
+	Action      string      `json:"action"`
+	PullRequest PullRequest `json:"pull_request"`
+	Repository  Repository  `json:"repository"`
+	Sender      User        `json:"sender"`
+	Comment     struct {
+		ID       int64  `json:"id"`
+		Body     string `json:"body"`
+		Path     string `json:"path"`
+		Line     int64  `json:"position"`
+		NewLine  int64  `json:"new_position"`
+		DiffHunk string `json:"diff_hunk"`
+		User     User   `json:"user"`
+	} `json:"comment"`
+}
+
+// Label models a Gitea repository label.
+type Label struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// CombinedStatus models the combined commit status returned by Gitea.
+type CombinedStatus struct {
+	State    string `json:"state"`
+	Statuses []struct {
+		Context     string `json:"context"`
+		Status      string `json:"status"`
+		Description string `json:"description"`
+		TargetURL   string `json:"target_url"`
+	} `json:"statuses"`
 }

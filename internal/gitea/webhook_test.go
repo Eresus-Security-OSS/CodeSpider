@@ -164,3 +164,97 @@ func TestWebhookSkipsDraftAndBotPRs(t *testing.T) {
 		})
 	}
 }
+
+func TestWebhookBotCommandsAndReadyForReview(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantKind    string
+		wantCommand string
+	}{
+		{name: "force review", body: "@codespider /review", wantKind: "pr_review", wantCommand: "force_review"},
+		{name: "summary", body: "@codespider /summary", wantKind: "comment_reply", wantCommand: "summary"},
+		{name: "fix", body: "@codespider /fix nil check", wantKind: "comment_reply", wantCommand: "fix"},
+		{name: "help", body: "@codespider /help", wantKind: "comment_reply", wantCommand: "help"},
+		{name: "ask", body: "@codespider why is this safe?", wantKind: "comment_reply", wantCommand: "ask"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got *ReviewTrigger
+			h := &WebhookHandler{
+				BotUsername: "codespider",
+				IgnoreBots:  true,
+				OnTrigger: func(tr ReviewTrigger) error {
+					got = &tr
+					return nil
+				},
+			}
+			payload := []byte(`{
+				"action": "created",
+				"is_pull": true,
+				"repository": {"full_name": "acme/api"},
+				"issue": {"number": 5, "title": "PR"},
+				"comment": {"id": 10, "body": "` + tc.body + `", "user": {"username": "alice"}},
+				"sender": {"username": "alice"}
+			}`)
+			req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(payload))
+			req.Header.Set("X-Gitea-Event", "issue_comment")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("expected 202, got %d", rec.Code)
+			}
+			if got == nil || got.Kind != tc.wantKind || got.Command != tc.wantCommand {
+				t.Fatalf("got %+v, want kind=%q command=%q", got, tc.wantKind, tc.wantCommand)
+			}
+		})
+	}
+
+	// Verify ready_for_review triggers PR review
+	var readyTrigger *ReviewTrigger
+	h := &WebhookHandler{
+		BotUsername: "codespider",
+		OnTrigger: func(tr ReviewTrigger) error {
+			readyTrigger = &tr
+			return nil
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader([]byte(`{
+		"action": "ready_for_review",
+		"repository": {"full_name": "acme/api"},
+		"pull_request": {"number": 8, "title": "Ready", "head": {"sha": "cafebabe"}}
+	}`)))
+	req.Header.Set("X-Gitea-Event", "pull_request")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || readyTrigger == nil || readyTrigger.PRNumber != 8 {
+		t.Fatalf("expected ready_for_review to trigger, code=%d trigger=%+v", rec.Code, readyTrigger)
+	}
+
+	// Verify pull_request_review_comment captures file path, line, and /ci command
+	var reviewCommentTrigger *ReviewTrigger
+	h2 := &WebhookHandler{
+		BotUsername: "codespider",
+		OnTrigger: func(tr ReviewTrigger) error {
+			reviewCommentTrigger = &tr
+			return nil
+		},
+	}
+	rcReq := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader([]byte(`{
+		"action": "created",
+		"repository": {"full_name": "acme/api"},
+		"pull_request": {"number": 12, "title": "Fix bug", "head": {"sha": "abc1234"}},
+		"comment": {"id": 44, "body": "@codespider /ci", "path": "pkg/auth.go", "new_position": 27, "diff_hunk": "@@ -25,3 +25,4 @@", "user": {"username": "alice"}},
+		"sender": {"username": "alice"}
+	}`)))
+	rcReq.Header.Set("X-Gitea-Event", "pull_request_review_comment")
+	rcRec := httptest.NewRecorder()
+	h2.ServeHTTP(rcRec, rcReq)
+	if rcRec.Code != http.StatusAccepted || reviewCommentTrigger == nil {
+		t.Fatalf("expected pull_request_review_comment to trigger, code=%d", rcRec.Code)
+	}
+	if reviewCommentTrigger.Command != "ci" || reviewCommentTrigger.ReviewPath != "pkg/auth.go" || reviewCommentTrigger.ReviewLine != 27 {
+		t.Fatalf("unexpected review comment trigger: %+v", reviewCommentTrigger)
+	}
+}

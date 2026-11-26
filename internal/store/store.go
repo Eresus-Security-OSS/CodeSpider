@@ -6,21 +6,29 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/evidence"
 )
 
 // RunRecord captures the outcome of a single agent review or reply run.
 type RunRecord struct {
-	PRKey          string    `json:"pr_key"`
-	Kind           string    `json:"kind"`
-	HeadSHA        string    `json:"head_sha"`
-	StepsUsed      int       `json:"steps_used"`
-	TokensUsed     int       `json:"tokens_used"`
-	InlineComments int       `json:"inline_comments"`
-	Status         string    `json:"status"` // success, failed, canceled
-	Error          string    `json:"error,omitempty"`
-	FinishedAt     time.Time `json:"finished_at"`
+	PRKey          string             `json:"pr_key"`
+	Kind           string             `json:"kind"`
+	HeadSHA        string             `json:"head_sha"`
+	Model          string             `json:"model,omitempty"`
+	Verdict        string             `json:"verdict,omitempty"`
+	StepsUsed      int                `json:"steps_used"`
+	TokensUsed     int                `json:"tokens_used"`
+	InlineComments int                `json:"inline_comments"`
+	Findings       []evidence.Finding `json:"findings,omitempty"`
+	Stages         []string           `json:"stages,omitempty"`
+	DurationMs     int64              `json:"duration_ms,omitempty"`
+	Status         string             `json:"status"` // success, failed, canceled
+	Error          string             `json:"error,omitempty"`
+	FinishedAt     time.Time          `json:"finished_at"`
 }
 
 type persistedState struct {
@@ -76,6 +84,20 @@ func (s *Store) IsAlreadyReviewed(prKey, sha string) bool {
 	return s.state.ReviewedSHAs[prKey] == sha
 }
 
+// LastReviewedSHA returns the most recently reviewed commit SHA for prKey, or "".
+func (s *Store) LastReviewedSHA(prKey string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.ReviewedSHAs[prKey]
+}
+
+// ReviewedPRCount returns the number of distinct PRs with a recorded reviewed SHA.
+func (s *Store) ReviewedPRCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.state.ReviewedSHAs)
+}
+
 // RecordRun persists the result of an agent run and updates the reviewed SHA on success.
 func (s *Store) RecordRun(rec RunRecord) error {
 	s.mu.Lock()
@@ -97,6 +119,42 @@ func (s *Store) RecentRuns() []RunRecord {
 	out := make([]RunRecord, len(s.state.RecentRuns))
 	copy(out, s.state.RecentRuns)
 	return out
+}
+
+// ListRuns returns newest-first paginated run records matching optional status and repo filters.
+func (s *Store) ListRuns(offset, limit int, statusFilter, repoFilter string) ([]RunRecord, int) {
+	if s == nil {
+		return nil, 0
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var filtered []RunRecord
+	for i := len(s.state.RecentRuns) - 1; i >= 0; i-- {
+		r := s.state.RecentRuns[i]
+		if statusFilter != "" && !strings.EqualFold(r.Status, statusFilter) {
+			continue
+		}
+		if repoFilter != "" && !strings.Contains(strings.ToLower(r.PRKey), strings.ToLower(repoFilter)) {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	total := len(filtered)
+	if offset >= total {
+		return nil, total
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return filtered[offset:end], total
 }
 
 func (s *Store) saveLocked() error {

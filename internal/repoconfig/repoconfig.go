@@ -17,23 +17,53 @@ var instructionFiles = []string{
 
 // Config holds per-repository review settings loaded from the PR worktree.
 type Config struct {
-	Enabled      bool
-	IgnorePaths  []string
-	Instructions string
+	Enabled             bool
+	IgnorePaths         []string
+	Skills              []string
+	MinSeverity         string
+	Model               string
+	AutoLabel           bool
+	AutoAssignReviewers bool
+	AdversarialSecurity *bool
+	ForbidImports       map[string][]string
+	Instructions        string
 }
 
 // Load reads .codespider.yaml/.yml and repository instruction files from worktreeDir.
 func Load(worktreeDir string) Config {
-	cfg := Config{Enabled: true}
-	if worktreeDir == "" {
-		return cfg
+	return LoadWithTrustedBase(worktreeDir, nil)
+}
+
+// LoadWithTrustedBase loads repository instructions from worktreeDir while enforcing
+// security/gate settings (enabled, ignore_paths, min_severity, adversarial_security, forbid_imports)
+// from trustedBaseYAML when provided (so untrusted PR heads cannot disable review gates).
+func LoadWithTrustedBase(worktreeDir string, trustedBaseYAML []byte) Config {
+	cfg := Config{Enabled: true, ForbidImports: make(map[string][]string)}
+	if worktreeDir != "" {
+		for _, name := range []string{".codespider.yaml", ".codespider.yml"} {
+			if raw, err := os.ReadFile(filepath.Join(worktreeDir, name)); err == nil {
+				parseYAMLSubset(string(raw), &cfg)
+				break
+			}
+		}
 	}
 
-	for _, name := range []string{".codespider.yaml", ".codespider.yml"} {
-		if raw, err := os.ReadFile(filepath.Join(worktreeDir, name)); err == nil {
-			parseYAMLSubset(string(raw), &cfg)
-			break
-		}
+	if len(trustedBaseYAML) > 0 {
+		baseCfg := Config{Enabled: true, ForbidImports: make(map[string][]string)}
+		parseYAMLSubset(string(trustedBaseYAML), &baseCfg)
+		cfg.Enabled = baseCfg.Enabled
+		cfg.IgnorePaths = baseCfg.IgnorePaths
+		cfg.MinSeverity = baseCfg.MinSeverity
+		cfg.AdversarialSecurity = baseCfg.AdversarialSecurity
+		cfg.ForbidImports = baseCfg.ForbidImports
+		cfg.Model = baseCfg.Model
+		cfg.Skills = baseCfg.Skills
+		cfg.AutoLabel = baseCfg.AutoLabel
+		cfg.AutoAssignReviewers = baseCfg.AutoAssignReviewers
+	}
+
+	if worktreeDir == "" {
+		return cfg
 	}
 
 	var sections []string
@@ -155,7 +185,7 @@ func matchesAny(path string, patterns []string) bool {
 // parseYAMLSubset parses a minimal subset of .codespider.yaml without external dependencies.
 func parseYAMLSubset(content string, cfg *Config) {
 	lines := strings.Split(content, "\n")
-	inIgnorePaths := false
+	inListKey := ""
 	inBlockInstr := false
 	var blockLines []string
 
@@ -178,10 +208,15 @@ func parseYAMLSubset(content string, cfg *Config) {
 			blockLines = nil
 		}
 
-		if strings.HasPrefix(trimmed, "- ") && inIgnorePaths {
+		if strings.HasPrefix(trimmed, "- ") && inListKey != "" {
 			item := strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")), `"'`)
 			if item != "" {
-				cfg.IgnorePaths = append(cfg.IgnorePaths, item)
+				switch inListKey {
+				case "ignore_paths":
+					cfg.IgnorePaths = append(cfg.IgnorePaths, item)
+				case "skills":
+					cfg.Skills = append(cfg.Skills, item)
+				}
 			}
 			continue
 		}
@@ -190,7 +225,7 @@ func parseYAMLSubset(content string, cfg *Config) {
 		if !ok {
 			continue
 		}
-		inIgnorePaths = false
+		inListKey = ""
 		key = strings.ToLower(strings.TrimSpace(key))
 		val = strings.TrimSpace(val)
 
@@ -203,7 +238,7 @@ func parseYAMLSubset(content string, cfg *Config) {
 			}
 		case "ignore_paths":
 			if val == "" {
-				inIgnorePaths = true
+				inListKey = "ignore_paths"
 			} else {
 				// Inline list: [vendor/**, *.lock]
 				val = strings.Trim(val, "[]")
@@ -211,6 +246,57 @@ func parseYAMLSubset(content string, cfg *Config) {
 					item := strings.Trim(strings.TrimSpace(part), `"'`)
 					if item != "" {
 						cfg.IgnorePaths = append(cfg.IgnorePaths, item)
+					}
+				}
+			}
+		case "skills":
+			if val == "" {
+				inListKey = "skills"
+			} else {
+				val = strings.Trim(val, "[]")
+				for _, part := range strings.Split(val, ",") {
+					item := strings.Trim(strings.TrimSpace(part), `"'`)
+					if item != "" {
+						cfg.Skills = append(cfg.Skills, item)
+					}
+				}
+			}
+		case "min_severity", "severity_threshold":
+			sev := strings.ToLower(strings.Trim(val, `"'`))
+			if sev == "info" || sev == "warning" || sev == "critical" {
+				cfg.MinSeverity = sev
+			}
+		case "model":
+			cfg.Model = strings.Trim(val, `"'`)
+		case "auto_label":
+			cfg.AutoLabel = strings.EqualFold(val, "true")
+		case "auto_assign_reviewers":
+			cfg.AutoAssignReviewers = strings.EqualFold(val, "true")
+		case "adversarial_security":
+			if strings.EqualFold(val, "true") {
+				b := true
+				cfg.AdversarialSecurity = &b
+			} else if strings.EqualFold(val, "false") {
+				b := false
+				cfg.AdversarialSecurity = &b
+			}
+		case "forbid_imports":
+			// Format: "internal/domain -> net/http, os/exec" or inline
+			if val != "" {
+				for _, rule := range strings.Split(strings.Trim(val, "[]"), ";") {
+					pkgPat, badList, okRule := strings.Cut(rule, "->")
+					if !okRule {
+						continue
+					}
+					pkgPat = strings.TrimSpace(strings.Trim(pkgPat, `"'`))
+					if cfg.ForbidImports == nil {
+						cfg.ForbidImports = make(map[string][]string)
+					}
+					for _, bad := range strings.Split(badList, ",") {
+						b := strings.TrimSpace(strings.Trim(bad, `"'`))
+						if b != "" {
+							cfg.ForbidImports[pkgPat] = append(cfg.ForbidImports[pkgPat], b)
+						}
 					}
 				}
 			}
@@ -225,4 +311,23 @@ func parseYAMLSubset(content string, cfg *Config) {
 	if inBlockInstr && len(blockLines) > 0 {
 		cfg.Instructions = strings.Join(blockLines, "\n")
 	}
+}
+
+// ExtractChangedPaths returns deduplicated file paths touched by a unified diff.
+func ExtractChangedPaths(diff string) []string {
+	if diff == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var paths []string
+	for _, chunk := range splitDiffChunks(diff) {
+		p := extractDiffPath(chunk)
+		if p != "" {
+			if _, ok := seen[p]; !ok {
+				seen[p] = struct{}{}
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
 }
