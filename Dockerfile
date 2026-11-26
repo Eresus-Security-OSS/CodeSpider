@@ -27,7 +27,12 @@ RUN set -eux; \
     done; \
     for bin in /usr/bin/git /usr/lib/git-core/git-remote-http; do \
         ldd "$bin" | awk '/=> \// {print $3} /^\// {print $1}' | while read -r lib; do \
-            [ -f "$lib" ] && mkdir -p "/git-rootfs$(dirname "$lib")" && cp -n "$lib" "/git-rootfs$lib"; \
+            if [ -f "$lib" ]; then \
+                dest="$lib"; \
+                case "$dest" in /lib/*|/lib64/*) dest="/usr$dest" ;; esac; \
+                mkdir -p "/git-rootfs$(dirname "$dest")"; \
+                cp -L -n "$lib" "/git-rootfs$dest"; \
+            fi; \
         done; \
     done; \
     chown -R 65532:65532 /git-rootfs/app
@@ -36,7 +41,8 @@ FROM gcr.io/distroless/base-debian13:nonroot
 
 WORKDIR /app
 
-COPY --from=builder /git-rootfs/ /
+COPY --from=builder /git-rootfs/usr/ /usr/
+COPY --from=builder --chown=65532:65532 /git-rootfs/app/ /app/
 COPY --from=builder /out/codespider /app/codespider
 COPY --chown=65532:65532 skills /app/skills
 
