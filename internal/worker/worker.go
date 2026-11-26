@@ -11,6 +11,7 @@ import (
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/agent"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/gitea"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/repoconfig"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/store"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/tools"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
@@ -169,6 +170,26 @@ func (p *Pool) handleTrigger(parentCtx context.Context, workerID int, t gitea.Re
 	} else {
 		defer cleanup()
 	}
+
+	repoCfg := repoconfig.Load(wtDir)
+	if t.Kind == "pr_review" && !repoCfg.Enabled {
+		p.logger.Info("skipping PR review per .codespider.yaml", "pr", prKey)
+		_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped by repository config")
+		return
+	}
+	if len(repoCfg.IgnorePaths) > 0 {
+		var skipped []string
+		diff, skipped = repoconfig.FilterDiff(diff, repoCfg.IgnorePaths)
+		if len(skipped) > 0 {
+			p.logger.Info("filtered ignored paths from diff", "pr", prKey, "skipped_count", len(skipped))
+		}
+		if t.Kind == "pr_review" && diff == "" {
+			p.logger.Info("skipping PR review; all changed files matched ignore_paths", "pr", prKey)
+			_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped (only ignored paths changed)")
+			return
+		}
+	}
+	t.RepoInstructions = repoCfg.Instructions
 
 	reg := tools.NewRegistry(tools.Params{
 		WorktreeDir: wtDir,
