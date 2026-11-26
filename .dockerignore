@@ -1,0 +1,12 @@
+.git
+.gitignore
+data/
+*.test
+*.out
+codespider
+codespider.yaml
+codespider.yml
+.env
+README.md
+docs/
+LICENSE
