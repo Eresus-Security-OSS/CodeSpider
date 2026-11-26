@@ -31,7 +31,7 @@ Gitea REST API (internal/gitea)
 ## Key Packages
 
 - `cmd/codespider`: Daemon entrypoint (`/webhook`, `/healthz`, `/readyz`, `/status`, graceful `SIGTERM` shutdown).
-- `internal/config`: Environment-based configuration and validation.
+- `internal/config`: YAML configuration (`codespider.yaml`, `-f`, `CODESPIDER_CONFIG_PATH`) and validation.
 - `internal/gitea`: Webhook HMAC verification, event normalization, and Gitea v1 REST client.
 - `internal/workspace`: Bare git mirror cache and isolated per-PR worktrees with path-traversal protection.
 - `internal/llm`: OpenAI-compatible `/chat/completions` client with tool-calling support.

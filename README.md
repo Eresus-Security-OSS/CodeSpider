@@ -19,13 +19,14 @@ CodeSpider runs as a lightweight daemon alongside your Gitea instance. When a pu
 ## Quick Start
 
 ```bash
-cp .env.example .env
-# Edit .env with your GITEA_BASE_URL, GITEA_TOKEN, GITEA_WEBHOOK_SECRET, and LLM settings
-set -a && source .env && set +a
+cp codespider.example.yaml codespider.yaml
+# Edit codespider.yaml with your Gitea, webhook, and LLM settings
 
 go build -o codespider ./cmd/codespider
-./codespider
+./codespider -f codespider.yaml
 ```
+
+You can also set `CODESPIDER_CONFIG_PATH=/path/to/codespider.yaml` or place `codespider.yaml` in the working directory.
 
 ## Documentation
 
