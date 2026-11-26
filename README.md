@@ -30,10 +30,18 @@ You can also set `CODESPIDER_CONFIG_PATH=/path/to/codespider.yaml` or place `cod
 
 ### Docker Compose (Distroless Debian 13)
 
+Production (pulls from `ghcr.io/eresus-security-oss/codespider:latest`):
+
 ```bash
 cp codespider.example.yaml codespider.yaml
 # Edit codespider.yaml with your Gitea, webhook, and LLM settings
-DOCKER_BUILDKIT=1 docker compose up -d --build
+docker compose up -d
+```
+
+Local development (builds from `Dockerfile`):
+
+```bash
+DOCKER_BUILDKIT=1 docker compose -f docker-compose.dev.yaml up -d --build
 ```
 
 ## Documentation
