@@ -6,7 +6,7 @@
   <h3>Self-hosted. Agentic. Always reviewing.</h3>
 
   <p>
-    An autonomous, 24/7 pull request reviewer for Gitea.<br />
+    An autonomous, 24/7 pull request reviewer for Gitea, Forgejo, and GitHub.<br />
     Built with Go. Powered by your preferred LLM.
   </p>
 
@@ -28,7 +28,9 @@
 ## What is CodeSpider?
 
 CodeSpider is a lightweight, self-hostable daemon that brings
-continuous, agentic code review to your Gitea instance.
+continuous, agentic code review to your Gitea, Forgejo, or GitHub repositories.
+Select the forge in `forge.provider`; the same isolated review worker handles
+webhooks, reconciliation, comments, statuses, and collaborator checks.
 
 Unlike simple diff-based reviewers, CodeSpider explores the
 surrounding codebase, follows repository-specific instructions,
@@ -51,7 +53,7 @@ and let it review pull requests around the clock.
 
 ```mermaid
 flowchart TD
-    A[Gitea Pull Request] --> B[Webhook Receiver]
+    A[Configured Forge Pull Request] --> B[Webhook Receiver]
     B --> C[Event Validation and Filtering]
     C --> D[Isolated Git Worktree]
     D --> E[CodeSpider Agent]
@@ -77,6 +79,14 @@ flowchart TD
 | **Review Memory & SARIF** | Authorized feedback suppression, incident-aware context, policy simulation, and SARIF 2.1.0 export (`--sarif`). |
 | **Interactive Commands** | Mention `@codespider` with `/review`, `/redteam`, `/summary`, `/ci`, `/fix`, `/pause`, `/resume`, `/resolve`, `/help`, or ask questions in PR/inline threads. |
 | **Observability, CLI & Bench** | `codespider review`, `codespider bench`, `codespider healthcheck`, `codespider version`, `codespider update` (release check, opt-in daemon check), SSE `/events`, Dry-Run Playground, Prometheus `/metrics`, and `SIGHUP` reload. |
+
+### Forge provider support
+
+Gitea and compatible Forgejo remain the default. GitHub.com and GitHub
+Enterprise Server are supported through the GitHub REST provider. Configure a
+GitHub token and webhook secret, then subscribe to `pull_request`,
+`issue_comment`, and `pull_request_review_comment` events. See the [GitHub setup
+guide](docs/github-provider.md) for required settings and webhook setup.
 
 ## Review Skills
 
@@ -125,7 +135,7 @@ The recommended deployment method for production.
 ```bash
 cp codespider.example.yaml codespider.yaml
 
-# Configure your Gitea instance, webhook secret,
+# Configure your selected forge, webhook secret,
 # and preferred LLM endpoint.
 
 docker compose up -d
@@ -168,17 +178,17 @@ DOCKER_BUILDKIT=1 docker compose \
 
 | Method | Endpoint | Purpose |
 | :--- | :--- | :--- |
-| POST | `/webhook` | Receives Gitea webhook events. |
+| POST | `/webhook` | Receives events for the configured forge (Gitea/Forgejo or GitHub). |
 | GET | `/healthz` | Process health. |
 | GET | `/readyz` | Service readiness. |
 | GET | `/status` | Service status and metrics JSON. |
 | GET | `/metrics` | Prometheus metrics exposition. |
 | GET | `/events` | Real-time SSE agent activity stream. |
-| POST | `/api/dry-run` | Run a dry-run PR review without mutating Gitea. |
+| POST | `/api/dry-run` | Run a dry-run PR review without mutating the configured forge. |
 | GET | `/` | Live web dashboard and Dry-Run Playground (`/dashboard`). |
 
-Webhook requests are authenticated using HMAC-SHA256
-verification through `X-Gitea-Signature`.
+Webhook requests are authenticated using HMAC-SHA256. GitHub requests use
+`X-Hub-Signature-256`; Gitea/Forgejo requests use `X-Gitea-Signature`.
 
 ## Security & Guardrails
 
@@ -231,6 +241,7 @@ When enabled, the agent can use:
 
 - [Architecture](docs/architecture.md)
 - [Gitea Setup Guide](docs/gitea-setup.md)
+- [GitHub Setup Guide](docs/github-provider.md)
 - [Configuration Reference](docs/configuration.md)
 
 ## Development

@@ -9,21 +9,40 @@ Config file resolution order:
 
 String values support optional `${ENV_VAR}` expansion (for example, `api_key: "${LLM_API_KEY}"`).
 
+Select the forge with `forge.provider`. Existing configurations that omit this
+key continue to use Gitea. GitHub configurations need either a static
+`github.token` or GitHub App credentials, plus the webhook secret. Forge tokens
+are also used for HTTPS git operations.
+
 ## Daemon YAML Keys
 
 | Key | Default | Required | Description |
 | --- | --- | --- | --- |
 | `server.listen_addr` | `:8080` | No | HTTP listen address for webhooks and health endpoints |
 | `server.admin_token` | `""` | Recommended | Optional Bearer/Basic token protecting `/`, `/status`, `/metrics`, `/events`, and `/api/dry-run` |
-| `gitea.base_url` | — | Yes | Base URL of your Gitea instance (e.g. `https://gitea.example.com`) |
-| `gitea.token` | — | Yes | API token for the Gitea bot account |
+| `forge.provider` | `gitea` | No | Forge backend: `gitea` or `github` |
+| `forge.repos` | `[]` | No | Optional `owner/repo` allowlist for reconciliation; empty discovers repos accessible to the configured token |
+| `forge.skip_draft_prs` | `true` | No | Skip draft and WIP pull requests |
+| `forge.ignore_bot_prs` | `true` | No | Skip PRs authored by bots |
+| `forge.sticky_summary` | `true` | No | Maintain one updated summary comment per PR |
+| `forge.require_collaborator_for_fix` | `true` | No | Require collaborator permission before executing `/fix` |
+| `gitea.base_url` | — | Required for Gitea | Base URL of your Gitea instance (e.g. `https://gitea.example.com`) |
+| `gitea.token` | — | Required for Gitea | API token for the Gitea bot account |
 | `gitea.webhook_secret` | `""` | Recommended | HMAC-SHA256 secret configured in Gitea webhooks |
-| `gitea.bot_username` | `codespider` | No | Bot username used for `@mention` detection and self-loop prevention |
-| `gitea.repos` | `[]` | No | Optional `owner/repo` list for periodic reconciliation (empty = auto-discover accessible repos) |
-| `gitea.skip_draft_prs` | `true` | No | Skip pull requests marked as draft or titled `WIP:` / `[WIP]` |
-| `gitea.ignore_bot_prs` | `true` | No | Skip pull requests authored by bots (`type: Bot` or `*[bot]`) |
-| `gitea.sticky_summary` | `true` | No | Maintain a single updated walkthrough card per PR with a Mermaid change diagram |
-| `gitea.require_collaborator_for_fix` | `true` | No | Require repository collaborator permission before executing `@codespider /fix` |
+| `gitea.bot_username` | `codespider` | No | Legacy Gitea alias for bot mention detection and self-loop prevention; use `github.bot_username` for GitHub |
+| `gitea.repos` | `[]` | No | Legacy Gitea alias for the reconciliation allowlist; prefer `forge.repos` |
+| `gitea.skip_draft_prs` | `true` | No | Legacy alias for `forge.skip_draft_prs` |
+| `gitea.ignore_bot_prs` | `true` | No | Legacy alias for `forge.ignore_bot_prs` |
+| `gitea.sticky_summary` | `true` | No | Legacy alias for `forge.sticky_summary` |
+| `gitea.require_collaborator_for_fix` | `true` | No | Legacy alias for `forge.require_collaborator_for_fix` |
+| `github.api_url` | `https://api.github.com` | No | GitHub REST API base URL; GitHub Enterprise Server commonly uses `https://HOST/api/v3` |
+| `github.token` | — | Required unless GitHub App credentials are configured | Static GitHub token used for API requests and HTTPS git operations |
+| `github.app_id` | — | No | GitHub App ID; configure together with installation ID and private key path to enable installation-token refresh |
+| `github.installation_id` | — | No | GitHub App installation ID |
+| `github.app_private_key_path` | — | No | Path to an RSA PEM private-key file mounted as a secret; installation tokens are refreshed automatically |
+| `github.webhook_secret` | — | Required for GitHub | Secret configured on the GitHub webhook; invalid signatures are rejected |
+| `github.bot_username` | `codespider` | No | Bot login used for mentions and self-loop prevention (GitHub App bots usually end in `[bot]`) |
+| `github.repos` | `[]` | No | GitHub-specific reconciliation allowlist; `forge.repos` takes precedence when set |
 | `llm.base_url` | `https://api.openai.com/v1` | No | OpenAI-compatible base URL (vLLM, LiteLLM, OpenAI, OpenRouter, etc.) |
 | `llm.api_key` | `""` | Recommended | Bearer token for the LLM endpoint |
 | `llm.model` | `gpt-5` | No | Primary model identifier passed to `/chat/completions` |
@@ -87,7 +106,7 @@ review:
 
 `path_instructions` takes a block list of `"<glob>: <instruction>"` items (up to 32, each truncated at 1 KiB). When a changed file matches the glob, the instruction is appended to the review prompt together with the matching paths. Globs follow the same rules as `ignore_paths`. Only the block-list form is supported, and the key is read from the PR head like `instructions`, so it guides the model but cannot disable review gates.
 
-The sticky summary comment (`gitea.sticky_summary`) also lists a collapsible per-file `+/-` table and a heuristic 1-5 review-effort estimate derived from diff size.
+The sticky summary comment (`forge.sticky_summary`) also lists a collapsible per-file `+/-` table and a heuristic 1-5 review-effort estimate derived from diff size.
 
 Automatic-review gating and pre-merge checks:
 
