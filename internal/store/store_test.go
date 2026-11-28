@@ -54,4 +54,21 @@ func TestStorePersistenceAndQueries(t *testing.T) {
 	if len(runs) != 1 || runs[0].DurationMs != 1200 {
 		t.Fatalf("unexpected persisted runs: %+v", runs)
 	}
+
+	for i := 0; i < 120; i++ {
+		if err := st2.RecordRun(RunRecord{
+			PRKey:      prKey,
+			Kind:       "pr_review",
+			HeadSHA:    "sha-loop",
+			Status:     "success",
+			DurationMs: int64(i),
+			FinishedAt: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("RecordRun %d failed: %v", i, err)
+		}
+	}
+	capped := st2.RecentRuns()
+	if len(capped) != 100 || capped[len(capped)-1].DurationMs != 119 {
+		t.Fatalf("expected 100 capped runs ending at 119, got len=%d last=%d", len(capped), capped[len(capped)-1].DurationMs)
+	}
 }

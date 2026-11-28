@@ -45,4 +45,11 @@ func TestBrokerPublishRecentAndSubscribe(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for subscriber close")
 	}
+
+	for i := 0; i < 20; i++ {
+		b.Publish(Event{Type: "step", Message: "burst"})
+	}
+	if cap(b.history) != 3 {
+		t.Fatalf("expected bounded history backing capacity 3, got %d", cap(b.history))
+	}
 }

@@ -426,7 +426,7 @@ func checkCSRF(r *http.Request, expectedCSRF string) bool {
 		return false
 	}
 	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" && r.Host != "" {
-		if u, err := url.Parse(origin); err == nil && !strings.EqualFold(u.Host, r.Host) {
+		if u, err := url.Parse(origin); err != nil || !strings.EqualFold(u.Host, r.Host) {
 			return false
 		}
 	}
