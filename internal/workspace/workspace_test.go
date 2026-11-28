@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,13 @@ func TestResolveSafePath(t *testing.T) {
 	// Reject absolute and traversal paths
 	if _, err := ResolveSafePath(root, "/etc/passwd"); err == nil {
 		t.Fatal("expected error for absolute path")
+	}
+	if runtime.GOOS == "windows" {
+		for _, bad := range []string{`\Windows\System32`, `C:relative.txt`} {
+			if _, err := ResolveSafePath(root, bad); err == nil {
+				t.Fatalf("expected error for non-relative Windows path %q", bad)
+			}
+		}
 	}
 	if _, err := ResolveSafePath(root, "../escape.txt"); err == nil {
 		t.Fatal("expected error for parent traversal")
@@ -282,6 +290,18 @@ func TestReadWriteSafeFileRejectsSymlinksAndGit(t *testing.T) {
 	got, err := ReadSafeFile(root, "sub/ok.txt", 1024)
 	if err != nil || string(got) != "hello" {
 		t.Fatalf("ReadSafeFile failed: %v (%q)", err, string(got))
+	}
+	if err := WriteSafeFile(root, "sub/ok.txt", []byte("abc")); err != nil {
+		t.Fatalf("overwriting existing file: %v", err)
+	}
+	got, err = ReadSafeFile(root, "sub/ok.txt", 1024)
+	if err != nil || string(got) != "abc" {
+		t.Fatalf("expected overwritten file without trailing bytes, got %q: %v", got, err)
+	}
+	if runtime.GOOS == "windows" {
+		if err := WriteSafeFile(root, ".GIT/hooks/pre-commit", []byte("bad")); err == nil {
+			t.Fatal("expected case-insensitive .git write to be rejected")
+		}
 	}
 	if err := WriteSafeFile(root, ".git/hooks/pre-commit", []byte("bad")); err == nil {
 		t.Fatal("expected .git write to be rejected")

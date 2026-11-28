@@ -13,10 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 )
 
 const maxDiffBytes = 5 << 20
@@ -484,7 +484,7 @@ func ResolveSafePath(rootDir, relPath string) (string, error) {
 	if strings.TrimSpace(rootDir) == "" {
 		return "", fmt.Errorf("workspace root is required")
 	}
-	if filepath.IsAbs(relPath) {
+	if filepath.IsAbs(relPath) || strings.HasPrefix(relPath, "/") || (runtime.GOOS == "windows" && (strings.HasPrefix(relPath, "\\") || filepath.VolumeName(relPath) != "")) {
 		return "", fmt.Errorf("path must be relative: %s", relPath)
 	}
 	absRoot, err := filepath.Abs(rootDir)
@@ -558,7 +558,7 @@ func (m *Manager) lockFor(key string) *sync.Mutex {
 	return l
 }
 
-// ReadSafeFile opens and reads relPath inside rootDir with symlink/O_NOFOLLOW protection and bounded size.
+// ReadSafeFile opens relPath inside rootDir without following a final symlink and bounds the read size.
 func ReadSafeFile(rootDir, relPath string, maxBytes int64) ([]byte, error) {
 	if maxBytes <= 0 {
 		maxBytes = 2 << 20
@@ -570,7 +570,7 @@ func ReadSafeFile(rootDir, relPath string, maxBytes int64) ([]byte, error) {
 	if info, lErr := os.Lstat(full); lErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("refusing symlink read: %s", relPath)
 	}
-	f, err := os.OpenFile(full, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := openFileNoFollow(full, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +581,9 @@ func ReadSafeFile(rootDir, relPath string, maxBytes int64) ([]byte, error) {
 // WriteSafeFile writes data to relPath inside rootDir after verifying no symlink traversal or .git write.
 func WriteSafeFile(rootDir, relPath string, data []byte) error {
 	clean := filepath.ToSlash(filepath.Clean(relPath))
+	if runtime.GOOS == "windows" {
+		clean = strings.ToLower(clean)
+	}
 	if clean == ".git" || strings.HasPrefix(clean, ".git/") || strings.Contains(clean, "/.git/") {
 		return fmt.Errorf("refusing to write inside .git: %s", relPath)
 	}
@@ -594,7 +597,7 @@ func WriteSafeFile(rootDir, relPath string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	f, err := openFileNoFollow(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
