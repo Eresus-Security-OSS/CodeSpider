@@ -32,6 +32,11 @@ type Config struct {
 	ForbidImports       map[string][]string
 	Instructions        string
 	PathInstructions    []PathInstruction
+	BaseBranches        []string
+	IgnoreTitleKeywords []string
+	TitlePattern        string
+	RequireDescription  bool
+	MaxChangedLines     int
 }
 
 // Load reads .codespider.yaml/.yml and repository instruction files from worktreeDir.
@@ -65,6 +70,11 @@ func LoadWithTrustedBase(worktreeDir string, trustedBaseYAML []byte) Config {
 		cfg.Skills = baseCfg.Skills
 		cfg.AutoLabel = baseCfg.AutoLabel
 		cfg.AutoAssignReviewers = baseCfg.AutoAssignReviewers
+		cfg.BaseBranches = baseCfg.BaseBranches
+		cfg.IgnoreTitleKeywords = baseCfg.IgnoreTitleKeywords
+		cfg.TitlePattern = baseCfg.TitlePattern
+		cfg.RequireDescription = baseCfg.RequireDescription
+		cfg.MaxChangedLines = baseCfg.MaxChangedLines
 	}
 
 	if worktreeDir == "" {
@@ -221,6 +231,10 @@ func parseYAMLSubset(content string, cfg *Config) {
 					cfg.IgnorePaths = append(cfg.IgnorePaths, item)
 				case "skills":
 					cfg.Skills = append(cfg.Skills, item)
+				case "base_branches":
+					cfg.BaseBranches = append(cfg.BaseBranches, item)
+				case "ignore_title_keywords":
+					cfg.IgnoreTitleKeywords = append(cfg.IgnoreTitleKeywords, item)
 				case "path_instructions":
 					if pi, ok := parsePathInstruction(item); ok {
 						cfg.PathInstructions = append(cfg.PathInstructions, pi)
@@ -258,6 +272,20 @@ func parseYAMLSubset(content string, cfg *Config) {
 					}
 				}
 			}
+		case "base_branches", "ignore_title_keywords":
+			if val == "" {
+				inListKey = key
+			} else if key == "base_branches" {
+				cfg.BaseBranches = append(cfg.BaseBranches, parseInlineList(val)...)
+			} else {
+				cfg.IgnoreTitleKeywords = append(cfg.IgnoreTitleKeywords, parseInlineList(val)...)
+			}
+		case "title_pattern":
+			cfg.TitlePattern = parseTitlePattern(val)
+		case "require_description":
+			cfg.RequireDescription = strings.EqualFold(strings.Trim(val, `"'`), "true")
+		case "max_changed_lines":
+			cfg.MaxChangedLines = parsePositiveInt(val)
 		case "path_instructions":
 			// Only the block-list form is supported: each item is "<glob>: <instruction>".
 			inListKey = "path_instructions"

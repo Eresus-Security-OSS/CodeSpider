@@ -584,6 +584,16 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 		p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 		return out, nil
 	}
+	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" {
+		if reason := repoCfg.SkipReason(t.BaseRef, t.PRTitle); reason != "" {
+			p.logger.Info("skipping automatic PR review per .codespider.yaml", "pr", prKey, "reason", reason)
+			if p.gitea != nil {
+				_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped: "+reason)
+			}
+			p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
+			return out, nil
+		}
+	}
 	if len(repoCfg.IgnorePaths) > 0 {
 		var skipped []string
 		diff, skipped = repoconfig.FilterDiff(diff, repoCfg.IgnorePaths)

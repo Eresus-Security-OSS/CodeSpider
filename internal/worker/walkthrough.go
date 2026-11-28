@@ -79,3 +79,19 @@ func writeChangeOverview(b *strings.Builder, diff string) {
 	}
 	b.WriteString("\n</details>\n\n")
 }
+
+// writeChecksSection appends the advisory pre-merge check table when any check is configured.
+func writeChecksSection(b *strings.Builder, checks []repoconfig.CheckResult) {
+	if len(checks) == 0 {
+		return
+	}
+	b.WriteString("**Pre-merge checks**\n\n| Check | Result | Detail |\n| :--- | :--- | :--- |\n")
+	for _, c := range checks {
+		result := "pass"
+		if !c.Passed {
+			result = "**warn**"
+		}
+		fmt.Fprintf(b, "| %s | %s | %s |\n", sanitizeTableCell(c.Name), result, sanitizeTableCell(c.Detail))
+	}
+	b.WriteString("\n")
+}

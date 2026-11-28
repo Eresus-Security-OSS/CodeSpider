@@ -73,6 +73,13 @@ review:
   path_instructions:
     - "internal/db/**: Every transaction must have a deferred Rollback."
     - "*.sql: Flag destructive DDL that has no rollback script."
+  base_branches:
+    - main
+    - "release/*"
+  ignore_title_keywords: [WIP, "[skip review]"]
+  title_pattern: "^(feat|fix|docs|chore)(\(.+\))?: .+"
+  require_description: true
+  max_changed_lines: 800
   instructions: |
     Verify context propagation on all database calls.
 ```
@@ -80,3 +87,9 @@ review:
 `path_instructions` takes a block list of `"<glob>: <instruction>"` items (up to 32, each truncated at 1 KiB). When a changed file matches the glob, the instruction is appended to the review prompt together with the matching paths. Globs follow the same rules as `ignore_paths`. Only the block-list form is supported, and the key is read from the PR head like `instructions`, so it guides the model but cannot disable review gates.
 
 The sticky summary comment (`gitea.sticky_summary`) also lists a collapsible per-file `+/-` table and a heuristic 1-5 review-effort estimate derived from diff size.
+
+Automatic-review gating and pre-merge checks:
+
+- `base_branches` limits automatic reviews to PRs targeting a matching branch (`path.Match` globs, so `release/*` matches `release/1.2` but not `release/1.2/hotfix`). `ignore_title_keywords` skips PRs whose title contains a keyword (case-insensitive). A skipped PR gets a `success` commit status that names the reason. `/review` and `/redteam` always run.
+- `title_pattern` (RE2 regex, max 256 characters), `require_description`, and `max_changed_lines` add an advisory **Pre-merge checks** table to the sticky summary. They never change commit status.
+- All five keys are policy: when the base branch has a `.codespider.yaml`, they are read from that file only, so a PR head cannot widen `base_branches`, add skip keywords, or weaken checks. The value is taken literally (no YAML escape processing), so write regex backslashes once.
