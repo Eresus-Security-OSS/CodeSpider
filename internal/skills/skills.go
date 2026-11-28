@@ -43,11 +43,12 @@ func LoadSelected(dir string, names []string) ([]Skill, error) {
 		if !validSkillNameRe.MatchString(name) {
 			return nil, fmt.Errorf("invalid skill name %q", name)
 		}
-		p, err := workspace.ResolveSafePath(dir, filepath.Join(name, "SKILL.md"))
+		rel := filepath.Join(name, "SKILL.md")
+		p, err := workspace.ResolveSafePath(dir, rel)
 		if err != nil {
 			return nil, fmt.Errorf("load skill %q: %w", name, err)
 		}
-		raw, err := os.ReadFile(p)
+		raw, err := workspace.ReadSafeFile(dir, rel, 256*1024)
 		if err != nil {
 			return nil, fmt.Errorf("load skill %q: %w", name, err)
 		}

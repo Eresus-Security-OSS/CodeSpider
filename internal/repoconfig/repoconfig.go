@@ -2,12 +2,16 @@
 package repoconfig
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
-const maxInstructionBytes = 16 * 1024
+const (
+	maxInstructionBytes = 16 * 1024
+	maxRepoConfigBytes  = 256 * 1024
+)
 
 var instructionFiles = []string{
 	"AGENTS.md",
@@ -41,7 +45,7 @@ func LoadWithTrustedBase(worktreeDir string, trustedBaseYAML []byte) Config {
 	cfg := Config{Enabled: true, ForbidImports: make(map[string][]string)}
 	if worktreeDir != "" {
 		for _, name := range []string{".codespider.yaml", ".codespider.yml"} {
-			if raw, err := os.ReadFile(filepath.Join(worktreeDir, name)); err == nil {
+			if raw, err := workspace.ReadSafeFile(worktreeDir, name, maxRepoConfigBytes); err == nil {
 				parseYAMLSubset(string(raw), &cfg)
 				break
 			}
@@ -68,7 +72,7 @@ func LoadWithTrustedBase(worktreeDir string, trustedBaseYAML []byte) Config {
 
 	var sections []string
 	for _, rel := range instructionFiles {
-		raw, err := os.ReadFile(filepath.Join(worktreeDir, filepath.FromSlash(rel)))
+		raw, err := workspace.ReadSafeFile(worktreeDir, rel, maxInstructionBytes+1)
 		if err != nil {
 			continue
 		}
