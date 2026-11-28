@@ -11,7 +11,6 @@ import (
 	"go/parser"
 	"go/printer"
 	"go/token"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/codeintel"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/lang"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // ChangeKind classifies the semantic nature of a code change.
@@ -363,7 +363,7 @@ func extractGoFuncInfo(rootDir string, snap *codeintel.Snapshot) map[string]goFu
 			}
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(rootDir, filepath.FromSlash(relFile)))
+		raw, err := workspace.ReadSafeFile(rootDir, relFile, 2<<20)
 		if err != nil {
 			continue
 		}

@@ -306,6 +306,16 @@ func TestReadWriteSafeFileRejectsSymlinksAndGit(t *testing.T) {
 	if err := WriteSafeFile(root, ".git/hooks/pre-commit", []byte("bad")); err == nil {
 		t.Fatal("expected .git write to be rejected")
 	}
+	mgr := NewManager(t.TempDir(), "")
+	for _, tc := range [][2]string{
+		{"main:evil", "a.go"},
+		{"main", "/etc/passwd"},
+		{"main", `\Windows\win.ini`},
+	} {
+		if _, err := mgr.ReadMirrorFile(context.Background(), "acme", "app", tc[0], tc[1]); err == nil {
+			t.Fatalf("expected ReadMirrorFile(%q, %q) to fail", tc[0], tc[1])
+		}
+	}
 	if err := os.Symlink(filepath.Join(outside, "ext.txt"), filepath.Join(root, "link.txt")); err == nil {
 		if _, err := ReadSafeFile(root, "link.txt", 1024); err == nil {
 			t.Fatal("expected symlink read to be rejected")

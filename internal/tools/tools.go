@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -882,23 +881,28 @@ func searchRepo(ctx context.Context, worktreeRoot, searchRoot, pattern string, m
 			return ctx.Err()
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if strings.EqualFold(d.Name(), ".git") || d.Name() == "node_modules" || d.Name() == "vendor" {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil || info.Size() > 512*1024 {
 			return nil
 		}
-		f, err := os.Open(path)
+		rel, err := filepath.Rel(worktreeRoot, path)
 		if err != nil {
 			return nil
 		}
-		defer f.Close()
+		raw, err := workspace.ReadSafeFile(worktreeRoot, rel, 512*1024)
+		if err != nil {
+			return nil
+		}
 
-		rel, _ := filepath.Rel(worktreeRoot, path)
-		sc := bufio.NewScanner(f)
+		sc := bufio.NewScanner(strings.NewReader(string(raw)))
 		lineNo := 0
 		for sc.Scan() {
 			lineNo++
@@ -994,7 +998,7 @@ func listRepoFiles(ctx context.Context, worktreeRoot, searchRoot, globPat string
 			return ctx.Err()
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "vendor" {
+			if strings.EqualFold(d.Name(), ".git") || d.Name() == "node_modules" || d.Name() == "vendor" {
 				return filepath.SkipDir
 			}
 			return nil

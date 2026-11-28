@@ -160,3 +160,23 @@ func TestAnnotateDiffMinSeverityAndListFiles(t *testing.T) {
 		t.Fatalf("inspect_go_symbols failed: %v, out=%s", err, symOut)
 	}
 }
+
+func TestSearchCodeSkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secretPath := filepath.Join(outside, "secret.yaml")
+	if err := os.WriteFile(secretPath, []byte("token: SUPER_SECRET_HOST_TOKEN\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secretPath, filepath.Join(root, "leak.yaml")); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+	reg := NewRegistry(Params{WorktreeDir: root})
+	out, err := reg.Execute(context.Background(), "search_code", `{"pattern":"SUPER_SECRET_HOST_TOKEN"}`)
+	if err != nil {
+		t.Fatalf("search_code failed: %v", err)
+	}
+	if strings.Contains(out, "SUPER_SECRET_HOST_TOKEN") {
+		t.Fatalf("search_code must not follow symlinks outside worktree, got: %s", out)
+	}
+}

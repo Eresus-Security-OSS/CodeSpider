@@ -288,7 +288,9 @@ func (m *Manager) ReadMirrorFile(ctx context.Context, owner, repo, ref, relPath 
 	if owner == "" || repo == "" || ref == "" || relPath == "" {
 		return nil, fmt.Errorf("owner, repo, ref, and relPath are required")
 	}
-	if strings.HasPrefix(ref, "-") || strings.HasPrefix(relPath, "-") || filepath.IsAbs(relPath) {
+	if strings.HasPrefix(ref, "-") || strings.ContainsAny(ref, ": \t\r\n") ||
+		strings.HasPrefix(relPath, "-") || filepath.IsAbs(relPath) ||
+		strings.HasPrefix(relPath, "/") || strings.HasPrefix(relPath, "\\") || filepath.VolumeName(relPath) != "" {
 		return nil, fmt.Errorf("invalid ref or relPath")
 	}
 	cleanRel := filepath.ToSlash(filepath.Clean(relPath))

@@ -50,12 +50,17 @@ type LabReport struct {
 }
 
 var blockedPoCImports = map[string]bool{
+	"C":        true,
 	"os/exec":  true,
 	"syscall":  true,
 	"unsafe":   true,
 	"plugin":   true,
 	"net":      true,
 	"net/http": true,
+}
+
+func isBlockedPoCImport(p string) bool {
+	return blockedPoCImports[p] || strings.HasPrefix(p, "net/") || strings.HasPrefix(p, "syscall/")
 }
 
 // ValidatePoCTestSource parses generated Go PoC test source and blocks unsafe imports or missing test functions.
@@ -73,7 +78,7 @@ func ValidatePoCTestSource(testName, src string) error {
 	}
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, `"`)
-		if blockedPoCImports[p] {
+		if isBlockedPoCImport(p) {
 			return fmt.Errorf("PoC test import %q is prohibited", p)
 		}
 	}
