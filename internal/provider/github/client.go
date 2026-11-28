@@ -441,6 +441,36 @@ func (c *Client) EnsureAndAddLabels(ctx context.Context, owner, repo string, num
 	return c.request(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/%s/issues/%d/labels", esc(owner), esc(repo), number), map[string][]string{"labels": labels}, nil, "application/vnd.github+json")
 }
 
+// RemoveLabelsWithPrefix detaches every label on the pull request whose name starts with prefix,
+// except the names in keep (see gitea.Client.RemoveLabelsWithPrefix).
+func (c *Client) RemoveLabelsWithPrefix(ctx context.Context, owner, repo string, number int64, prefix string, keep []string) error {
+	if prefix == "" {
+		return fmt.Errorf("label prefix is required")
+	}
+	keepSet := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		keepSet[strings.ToLower(strings.TrimSpace(k))] = true
+	}
+	base := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", esc(owner), esc(repo), number)
+	var current []struct {
+		Name string `json:"name"`
+	}
+	if err := c.request(ctx, http.MethodGet, base+"?per_page=100", nil, &current, "application/vnd.github+json"); err != nil {
+		return err
+	}
+	var firstErr error
+	for _, lbl := range current {
+		lower := strings.ToLower(lbl.Name)
+		if !strings.HasPrefix(lower, strings.ToLower(prefix)) || keepSet[lower] {
+			continue
+		}
+		if err := c.request(ctx, http.MethodDelete, base+"/"+esc(lbl.Name), nil, nil, "application/vnd.github+json"); err != nil && firstErr == nil && !strings.Contains(err.Error(), "404") {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func githubLabelColor(name string) string {
 	switch {
 	case strings.EqualFold(name, "security"):

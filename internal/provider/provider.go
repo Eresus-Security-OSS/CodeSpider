@@ -30,6 +30,11 @@ type ForgeProvider interface {
 	IsCollaborator(ctx context.Context, owner, repo, username string) (bool, error)
 }
 
+// LabelPrefixReplacer is implemented by providers that can detach outdated labels from a PR.
+type LabelPrefixReplacer interface {
+	RemoveLabelsWithPrefix(ctx context.Context, owner, repo string, number int64, prefix string, keep []string) error
+}
+
 // ReviewThreadResolver is implemented by providers that can resolve inline review threads.
 type ReviewThreadResolver interface {
 	ListPullReviewComments(ctx context.Context, owner, repo string, number, reviewID int64) ([]gitea.PullReviewComment, error)
@@ -106,6 +111,10 @@ func (a *GiteaAdapter) AddIssueReaction(ctx context.Context, owner, repo string,
 
 func (a *GiteaAdapter) EnsureAndAddLabels(ctx context.Context, owner, repo string, number int64, labels []string) error {
 	return a.Client.EnsureAndAddLabels(ctx, owner, repo, number, labels)
+}
+
+func (a *GiteaAdapter) RemoveLabelsWithPrefix(ctx context.Context, owner, repo string, number int64, prefix string, keep []string) error {
+	return a.Client.RemoveLabelsWithPrefix(ctx, owner, repo, number, prefix, keep)
 }
 
 func (a *GiteaAdapter) RequestReviewers(ctx context.Context, owner, repo string, number int64, reviewers []string) error {
