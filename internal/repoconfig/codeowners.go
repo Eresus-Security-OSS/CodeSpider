@@ -1,10 +1,11 @@
 package repoconfig
 
 import (
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // OwnerRule maps a CODEOWNERS path pattern to Git usernames.
@@ -25,7 +26,7 @@ func LoadCodeOwners(worktreeDir string) []OwnerRule {
 		return nil
 	}
 	for _, rel := range codeOwnerFiles {
-		raw, err := os.ReadFile(filepath.Join(worktreeDir, filepath.FromSlash(rel)))
+		raw, err := workspace.ReadSafeFile(worktreeDir, rel, maxRepoConfigBytes)
 		if err != nil {
 			continue
 		}

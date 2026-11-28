@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // Status describes the execution outcome of a sandboxed test run.
@@ -204,7 +206,7 @@ func (e *Executor) buildContainerArgs(hostWorkspace, relPkg, testName string) []
 		raceFlag = "-race "
 		cgoEnv = "CGO_ENABLED=1"
 	}
-	shellCmd := fmt.Sprintf("cp -R /workspace-ro/. /work/ && cd %s && go test %s-v -count=1 -run '^%s$' .", containerWorkdir, raceFlag, testName)
+	shellCmd := fmt.Sprintf("cp -R /workspace-ro/. /work/ && cd -- \"$1\" && go test %s-v -count=1 -run '^%s$' .", raceFlag, testName)
 	return []string{
 		"run", "--rm",
 		"--network=none",
@@ -225,7 +227,7 @@ func (e *Executor) buildContainerArgs(hostWorkspace, relPkg, testName string) []
 		"-v", hostWorkspace + ":/workspace-ro:ro",
 		"-w", "/work",
 		e.cfg.Image,
-		"sh", "-c", shellCmd,
+		"sh", "-c", shellCmd, "_", containerWorkdir,
 	}
 }
 
@@ -233,7 +235,7 @@ func cleanRelSubdir(root, sub string) (string, error) {
 	if strings.TrimSpace(sub) == "" || sub == "." {
 		return ".", nil
 	}
-	if filepath.IsAbs(sub) {
+	if filepath.IsAbs(sub) || strings.HasPrefix(sub, "/") || strings.HasPrefix(sub, "\\") || filepath.VolumeName(sub) != "" {
 		return "", fmt.Errorf("package_dir must be relative: %s", sub)
 	}
 	clean := filepath.ToSlash(filepath.Clean(sub))
@@ -241,7 +243,11 @@ func cleanRelSubdir(root, sub string) (string, error) {
 		return "", fmt.Errorf("package_dir escapes workspace: %s", sub)
 	}
 	if root != "" {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(clean)))
+		resolved, err := workspace.ResolveSafePath(root, clean)
+		if err != nil {
+			return "", fmt.Errorf("package_dir escapes workspace: %s", sub)
+		}
+		info, err := os.Stat(resolved)
 		if err != nil || !info.IsDir() {
 			return "", fmt.Errorf("package_dir not found: %s", sub)
 		}
@@ -257,7 +263,7 @@ func copyWorkspaceWithoutGit(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		if d.Name() == ".git" && d.IsDir() {
+		if strings.EqualFold(d.Name(), ".git") && d.IsDir() {
 			return filepath.SkipDir
 		}
 		rel, err := filepath.Rel(src, path)

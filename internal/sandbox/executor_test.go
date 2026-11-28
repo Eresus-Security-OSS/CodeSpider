@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -42,5 +44,35 @@ func TestContainerArgsEnforceHardening(t *testing.T) {
 	res := digestReq.RunGoTest(context.Background(), t.TempDir(), ".", "TestBug", "")
 	if res.Status != StatusUnavailable || !strings.Contains(res.Output, "@sha256:") {
 		t.Fatalf("expected digest requirement failure, got %+v", res)
+	}
+
+	// Ensure package_dir is passed as a positional arg to sh -c, never interpolated into the shell command.
+	injArgs := exec.buildContainerArgs("/tmp/ws", "pkg/$(id);evil", "TestBug")
+	if len(injArgs) < 3 || injArgs[len(injArgs)-2] != "_" || injArgs[len(injArgs)-1] != "/work/pkg/$(id);evil" {
+		t.Fatalf("expected containerWorkdir as positional $1 argument, got tail: %#v", injArgs[len(injArgs)-4:])
+	}
+	shellScript := injArgs[len(injArgs)-3]
+	if strings.Contains(shellScript, "$(id)") || !strings.Contains(shellScript, `cd -- "$1"`) {
+		t.Fatalf("shell script must not interpolate containerWorkdir: %q", shellScript)
+	}
+
+	// cleanRelSubdir rejects rooted and traversal paths.
+	for _, bad := range []string{"/etc", `\Windows`, "../escape"} {
+		if _, err := cleanRelSubdir("", bad); err == nil {
+			t.Fatalf("expected cleanRelSubdir(%q) to fail", bad)
+		}
+	}
+
+	// copyWorkspaceWithoutGit skips case-variant .GIT directories.
+	src := t.TempDir()
+	dst := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(src, ".GIT"), 0o755)
+	_ = os.WriteFile(filepath.Join(src, ".GIT", "config"), []byte("secret"), 0o644)
+	_ = os.WriteFile(filepath.Join(src, "main.go"), []byte("package main\n"), 0o644)
+	if err := copyWorkspaceWithoutGit(src, dst); err != nil {
+		t.Fatalf("copyWorkspaceWithoutGit failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".GIT")); !os.IsNotExist(err) {
+		t.Fatalf("expected .GIT directory to be skipped, stat err=%v", err)
 	}
 }

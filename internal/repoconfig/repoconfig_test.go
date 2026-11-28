@@ -119,3 +119,31 @@ review:
 		t.Fatalf("unexpected matched reviewers: %#v", reviewers)
 	}
 }
+
+func TestLoadRejectsSymlinkedConfigInstructionsAndCodeOwners(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	secretYAML := filepath.Join(outside, "secret.yaml")
+	secretInstr := filepath.Join(outside, "secret.md")
+	secretCO := filepath.Join(outside, "CODEOWNERS")
+	_ = os.WriteFile(secretYAML, []byte("review:\n  enabled: false\n  instructions: LEAKED_YAML\n"), 0o644)
+	_ = os.WriteFile(secretInstr, []byte("LEAKED_HOST_SECRET"), 0o644)
+	_ = os.WriteFile(secretCO, []byte("* @leaked\n"), 0o644)
+
+	if err := os.Symlink(secretInstr, filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Skipf("symlinks not supported: %v", err)
+	}
+	_ = os.Symlink(secretYAML, filepath.Join(dir, ".codespider.yaml"))
+	_ = os.Symlink(secretCO, filepath.Join(dir, "CODEOWNERS"))
+
+	cfg := Load(dir)
+	if !cfg.Enabled {
+		t.Fatal("expected symlinked .codespider.yaml not to disable reviews")
+	}
+	if strings.Contains(cfg.Instructions, "LEAKED_HOST_SECRET") || strings.Contains(cfg.Instructions, "LEAKED_YAML") {
+		t.Fatalf("expected symlinked host files to be rejected, got instructions: %q", cfg.Instructions)
+	}
+	if rules := LoadCodeOwners(dir); len(rules) != 0 {
+		t.Fatalf("expected symlinked CODEOWNERS to be rejected, got %+v", rules)
+	}
+}
