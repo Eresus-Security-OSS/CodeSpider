@@ -36,6 +36,7 @@ import (
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/metrics"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/opsintel"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/orggraph"
+	githubprovider "github.com/Eresus-Security-OSS/CodeSpider/internal/provider/github"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/sandbox"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/security"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/skills"
@@ -108,11 +109,15 @@ func main() {
 
 	metricsCollector := metrics.NewCollector()
 	eventBroker := events.NewBroker(100).WithRedactor(func(msg string) string {
-		return security.RedactText(msg, cfg.GiteaToken, cfg.LLMAPIKey, cfg.GiteaWebhookSecret, cfg.AdminToken)
+		return security.RedactText(msg, cfg.GiteaToken, cfg.GitHubToken, cfg.LLMAPIKey, cfg.GiteaWebhookSecret, cfg.GitHubWebhookSecret, cfg.AdminToken)
 	})
 	auditLog := audit.NewLogger(cfg.DataDir)
-	giteaClient := gitea.NewClient(cfg.GiteaBaseURL, cfg.GiteaToken)
-	wsManager := workspace.NewManager(cfg.DataDir, cfg.GiteaToken).WithAllowedOrigin(cfg.GiteaBaseURL)
+	forgeClient, gitToken, err := newForgeProvider(cfg)
+	if err != nil {
+		logger.Error("failed to configure forge", "err", err)
+		os.Exit(1)
+	}
+	wsManager := workspace.NewManager(cfg.DataDir, "").WithTokenProvider(gitToken).WithGitUsername(forgeGitUsername(cfg)).WithAllowedOrigin(forgeAPIURL(cfg))
 	wsManager.CleanupStaleWorktrees(ctx)
 
 	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout).
@@ -136,7 +141,7 @@ func main() {
 		QueueSize:                 128,
 		EnableWrite:               cfg.AgentEnableWrite,
 		EnableProofOfBug:          cfg.AgentEnableProofOfBug,
-		AuthorName:                cfg.GiteaBotUsername,
+		AuthorName:                forgeBotUsername(cfg),
 		SkipDrafts:                cfg.SkipDraftPRs,
 		IgnoreBots:                cfg.IgnoreBotPRs,
 		StickySummary:             cfg.StickySummary,
@@ -146,7 +151,7 @@ func main() {
 		SandboxMode:               cfg.SandboxMode,
 		JobTimeout:                cfg.AgentJobTimeout,
 		AlertWebhookURL:           cfg.AlertWebhookURL,
-		Gitea:                     giteaClient,
+		Forge:                     forgeClient,
 		Workspace:                 wsManager,
 		Agent:                     runner,
 		Store:                     st,
@@ -169,7 +174,7 @@ func main() {
 	cfgPtr.Store(&cfg)
 
 	pool.Start(ctx)
-	pool.StartReconciler(ctx, cfg.ReconcileInterval, cfg.GiteaRepos)
+	pool.StartReconciler(ctx, cfg.ReconcileInterval, forgeRepos(cfg))
 
 	// The release check is an outbound call to api.github.com, so it only runs when explicitly enabled.
 	var updateMonitor *update.Monitor
@@ -250,15 +255,26 @@ func buildHTTPHandler(cfg config.Config, pool *worker.Pool, st *store.Store, mc 
 		langReg:   lang.NewDefaultRegistry(),
 		skillsDir: cfg.AgentSkillsDir,
 	})
-	mux.Handle("/webhook", &gitea.WebhookHandler{
-		Secret:        cfg.GiteaWebhookSecret,
-		RequireSecret: !cfg.AllowUnsignedWebhooks,
-		BotUsername:   cfg.GiteaBotUsername,
-		SkipDrafts:    cfg.SkipDraftPRs,
-		IgnoreBots:    cfg.IgnoreBotPRs,
-		OnTrigger:     pool.Enqueue,
-		OnEvent:       mc.RecordWebhook,
-	})
+	if cfg.ForgeProvider == "github" {
+		mux.Handle("/webhook", &githubprovider.WebhookHandler{
+			Secret:      cfg.GitHubWebhookSecret,
+			BotUsername: cfg.GitHubBotUsername,
+			SkipDrafts:  cfg.SkipDraftPRs,
+			IgnoreBots:  cfg.IgnoreBotPRs,
+			OnTrigger:   pool.Enqueue,
+			OnEvent:     mc.RecordWebhook,
+		})
+	} else {
+		mux.Handle("/webhook", &gitea.WebhookHandler{
+			Secret:        cfg.GiteaWebhookSecret,
+			RequireSecret: !cfg.AllowUnsignedWebhooks,
+			BotUsername:   cfg.GiteaBotUsername,
+			SkipDrafts:    cfg.SkipDraftPRs,
+			IgnoreBots:    cfg.IgnoreBotPRs,
+			OnTrigger:     pool.Enqueue,
+			OnEvent:       mc.RecordWebhook,
+		})
+	}
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

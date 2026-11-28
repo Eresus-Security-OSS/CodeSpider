@@ -65,8 +65,12 @@ func runReviewCLI(args []string) int {
 	}
 	memStore, _ := memory.Open(cfg.DataDir)
 
-	giteaClient := gitea.NewClient(cfg.GiteaBaseURL, cfg.GiteaToken)
-	wsManager := workspace.NewManager(cfg.DataDir, cfg.GiteaToken).WithAllowedOrigin(cfg.GiteaBaseURL)
+	forgeClient, gitToken, err := newForgeProvider(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "forge configuration error: %v\n", err)
+		return 1
+	}
+	wsManager := workspace.NewManager(cfg.DataDir, "").WithTokenProvider(gitToken).WithGitUsername(forgeGitUsername(cfg)).WithAllowedOrigin(forgeAPIURL(cfg))
 	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout).
 		WithRetry(cfg.LLMMaxRetries, time.Second).
 		WithReasoningEffort(cfg.LLMReasoningEffort)
@@ -86,7 +90,7 @@ func runReviewCLI(args []string) int {
 		Workers:                   1,
 		EnableWrite:               cfg.AgentEnableWrite,
 		EnableProofOfBug:          cfg.AgentEnableProofOfBug,
-		AuthorName:                cfg.GiteaBotUsername,
+		AuthorName:                forgeBotUsername(cfg),
 		SkipDrafts:                cfg.SkipDraftPRs,
 		IgnoreBots:                cfg.IgnoreBotPRs,
 		StickySummary:             cfg.StickySummary,
@@ -96,7 +100,7 @@ func runReviewCLI(args []string) int {
 		SandboxMode:               cfg.SandboxMode,
 		JobTimeout:                cfg.AgentJobTimeout,
 		AlertWebhookURL:           cfg.AlertWebhookURL,
-		Gitea:                     giteaClient,
+		Forge:                     forgeClient,
 		Workspace:                 wsManager,
 		Agent:                     runner,
 		Store:                     st,

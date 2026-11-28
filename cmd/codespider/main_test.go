@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +90,35 @@ func TestHTTPEndpoints(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown path, got %d", rec.Code)
+	}
+}
+
+func TestBuildHTTPHandlerRoutesGitHubWebhook(t *testing.T) {
+	cfg := config.Default()
+	cfg.ForgeProvider = "github"
+	cfg.GitHubWebhookSecret = "hook-secret"
+	cfg.GitHubBotUsername = "codespider[bot]"
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := memory.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mc := metrics.NewCollector()
+	pool := worker.NewPool(worker.Config{Workers: 1, Store: st, Metrics: mc, Memory: mem})
+	handler := buildHTTPHandler(cfg, pool, st, mc, events.NewBroker(10), mem, audit.NewLogger(t.TempDir()), nil, nil)
+	payload := []byte(`{"action":"opened","number":4,"repository":{"id":1,"full_name":"acme/api","clone_url":"https://github.com/acme/api.git"},"sender":{"login":"alice","type":"User"},"pull_request":{"number":4,"title":"Change","user":{"login":"alice","type":"User"},"base":{"ref":"main","repo":{"id":1,"full_name":"acme/api","clone_url":"https://github.com/acme/api.git"}},"head":{"ref":"topic","sha":"deadbeef","repo":{"id":1,"full_name":"acme/api","clone_url":"https://github.com/acme/api.git"}}}}`)
+	mac := hmac.New(sha256.New, []byte(cfg.GitHubWebhookSecret))
+	_, _ = mac.Write(payload)
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(payload))
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || pool.QueueDepth() != 1 {
+		t.Fatalf("GitHub webhook did not enqueue: status=%d depth=%d body=%s", rec.Code, pool.QueueDepth(), rec.Body.String())
 	}
 }
 

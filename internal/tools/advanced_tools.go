@@ -118,13 +118,13 @@ func (r *Registry) registerAdvancedTools(p Params) {
 	)
 
 	r.register("get_ci_status",
-		"Fetch combined CI / commit status checks for the pull request head commit from Gitea.",
+		"Fetch combined CI / commit status checks for the pull request head commit from the configured forge.",
 		schema(map[string]any{}, nil),
 		func(ctx context.Context, raw string) (string, error) {
-			if p.Gitea == nil || p.Trigger.HeadSHA == "" {
+			if p.Forge == nil || p.Trigger.HeadSHA == "" {
 				return "no CI status available", nil
 			}
-			cs, err := p.Gitea.GetCombinedCommitStatus(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.HeadSHA)
+			cs, err := p.Forge.GetCombinedCommitStatus(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.HeadSHA)
 			if err != nil {
 				return "", err
 			}

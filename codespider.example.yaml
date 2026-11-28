@@ -1,5 +1,5 @@
 # =============================================================================
-# CodeSpider - 24/7 Agentic Gitea PR Reviewer Configuration
+# CodeSpider - 24/7 Agentic Gitea/Forgejo/GitHub PR Reviewer Configuration
 # Copy to codespider.yaml or pass via:
 #   ./codespider -f codespider.yaml
 #   CODESPIDER_CONFIG_PATH=/etc/codespider/codespider.yaml ./codespider
@@ -12,23 +12,41 @@ server:
   # Optional: protect /, /status, /metrics, /events, and /api/dry-run
   # admin_token: "${CODESPIDER_ADMIN_TOKEN}"
 
-gitea:
-  base_url: "https://gitea.example.com"
-  token: "replace-with-gitea-bot-token"
-  webhook_secret: "replace-with-webhook-hmac-secret"
-  bot_username: "codespider"
-  # Optional: restrict periodic reconciliation to specific owner/repo slugs.
-  # Leave unset to auto-discover repositories accessible to the bot token.
+forge:
+  provider: "gitea" # gitea (default) or github
+  # Optional allowlist for periodic reconciliation; empty discovers accessible repos.
   # repos:
   #   - my-org/my-repo
   skip_draft_prs: true
   ignore_bot_prs: true
   sticky_summary: true
   require_collaborator_for_fix: true
+
+gitea:
+  base_url: "https://gitea.example.com"
+  token: "replace-with-gitea-bot-token"
+  webhook_secret: "replace-with-webhook-hmac-secret"
+  bot_username: "codespider"
   allow_unsigned_webhooks: false
   allow_same_owner_cross_repo: false
   # cross_repo_allowlist:
   #   - my-org/shared-contracts
+
+# To use GitHub instead, set forge.provider to "github", configure the GitHub
+# credentials and webhook secret below, and remove/comment out the gitea block.
+# Configure a GitHub webhook for pull_request, issue_comment, and
+# pull_request_review_comment events, with application/json content type and
+# this endpoint as its target: http(s)://<codespider-host>:8080/webhook
+#github:
+#  api_url: "https://api.github.com" # GitHub Enterprise Server: https://host/api/v3
+#  token: "${CODESPIDER_GITHUB_TOKEN}"
+#  webhook_secret: "${CODESPIDER_GITHUB_WEBHOOK_SECRET}"
+#  bot_username: "codespider[bot]"
+# For automatic GitHub App token creation and refresh, configure these instead
+# of github.token. Mount the PEM key as a read-only secret file.
+#  app_id: 123456
+#  installation_id: 987654321
+#  app_private_key_path: "/run/secrets/codespider-github-app.pem"
 
 llm:
   base_url: "https://api.openai.com/v1"

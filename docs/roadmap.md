@@ -34,7 +34,8 @@ This roadmap specifies the architecture, threat model, resource bounds, configur
 - **Integration Tests:** Mutate `<` to `<=` on a boundary helper and verify surviving mutant warning.
 
 #### 2. Temporal Persistent Graph & External Integrations (Phase 8)
-- **GitHub / GitLab Providers (`internal/provider`):** Implement `ForgeProvider` for GitHub App / GitLab webhooks; keep Gitea/Forgejo primary.
+- **GitHub Provider (`internal/provider/github`):** Implemented REST operations, signed webhook normalization, daemon configuration, reconciliation, GitHub App installation-token refresh, and review-thread resolution. Live provider validation remains future work.
+- **GitLab Provider:** Implement `ForgeProvider` and webhook normalization for GitLab; keep Gitea/Forgejo primary.
 - **MCP Server (`cmd/codespider mcp`):** Expose `search_org_repos`, `git_forensics`, and `codeintel` read-only tools over stdio/JSON-RPC for IDE agents, enforcing `policy.CapReadWorktree`.
 - **LSP & Multi-Language Analyzers:** Optional out-of-process LSP/tree-sitter sidecar with strict timeout and `io.LimitReader` bounds.
 - **Eresus Guard & Eresus Workbench:** Export SARIF 2.1.0 (`--sarif`) and webhook alerts (`alert.webhook_url`) into Eresus security pipelines without coupling core daemon state.

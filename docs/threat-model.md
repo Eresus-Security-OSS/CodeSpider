@@ -4,7 +4,8 @@
 
 | Boundary | Untrusted Inputs | Trusted Inputs |
 | :--- | :--- | :--- |
-| **Webhook Ingress** | HTTP body, headers (until HMAC-SHA256 verified) | `gitea.webhook_secret`, `server.admin_token` |
+| **Webhook Ingress** | HTTP body, headers (until HMAC-SHA256 verified) | Selected provider webhook secret, `server.admin_token` |
+| **GitHub Provider** | HTTP body, `X-Hub-Signature-256`, configured token or App private key, and API base URL | HMAC verified before parsing; static or short-lived installation token is held in memory for API/HTTPS git auth; App private key is read from the configured secret file; API URL must be HTTPS. |
 | **Pull Request Content** | PR title/body, diff, source code, `.codespider.yaml` on PR head, PR/review comments, commit messages, tool outputs | `codespider.yaml` daemon config, base-branch `.codespider.yaml` (`refs/heads/<base>`), `skills/` on daemon host |
 | **Code Execution** | Any Go test, `init()`, or build script inside PR worktree | Container runtime (`--network=none`, `--cap-drop=ALL`, `--read-only`) |
 | **Review Memory** | PR comments from external/fork contributors | Collaborator/admin feedback via authenticated API or collaborator-gated commands |

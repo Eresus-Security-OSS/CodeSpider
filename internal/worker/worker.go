@@ -21,6 +21,7 @@ import (
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/opsintel"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/orggraph"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/policy"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/provider"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/repoconfig"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/sandbox"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/security"
@@ -51,7 +52,7 @@ type DryRunResult struct {
 	DurationMs      int64                 `json:"duration_ms"`
 }
 
-// Pool processes Gitea triggers concurrently with per-PR superseding.
+// Pool processes normalized forge triggers concurrently with per-PR superseding.
 type Pool struct {
 	workers                 int
 	enableWrite             bool
@@ -67,7 +68,7 @@ type Pool struct {
 	alertWebhookURL         string
 	jobTimeout              time.Duration
 	queue                   chan gitea.ReviewTrigger
-	gitea                   *gitea.Client
+	forge                   provider.ForgeProvider
 	workspace               *workspace.Manager
 	agent                   *agent.Runner
 	store                   *store.Store
@@ -105,6 +106,7 @@ type Config struct {
 	SandboxMode               string
 	AlertWebhookURL           string
 	Gitea                     *gitea.Client
+	Forge                     provider.ForgeProvider
 	Workspace                 *workspace.Manager
 	Agent                     *agent.Runner
 	Store                     *store.Store
@@ -136,6 +138,10 @@ func NewPool(cfg Config) *Pool {
 	if cfg.Sandbox == nil {
 		cfg.Sandbox = sandbox.NewExecutor(sandbox.Config{Mode: cfg.SandboxMode})
 	}
+	forge := cfg.Forge
+	if forge == nil && cfg.Gitea != nil {
+		forge = &provider.GiteaAdapter{Client: cfg.Gitea}
+	}
 	return &Pool{
 		workers:                 cfg.Workers,
 		enableWrite:             cfg.EnableWrite,
@@ -151,7 +157,7 @@ func NewPool(cfg Config) *Pool {
 		alertWebhookURL:         cfg.AlertWebhookURL,
 		jobTimeout:              jobTimeoutOrDefault(cfg.JobTimeout),
 		queue:                   make(chan gitea.ReviewTrigger, cfg.QueueSize),
-		gitea:                   cfg.Gitea,
+		forge:                   forge,
 		workspace:               cfg.Workspace,
 		agent:                   cfg.Agent,
 		store:                   cfg.Store,
@@ -188,7 +194,7 @@ func (p *Pool) Start(ctx context.Context) {
 
 // StartReconciler periodically scans open pull requests to recover missed webhooks.
 func (p *Pool) StartReconciler(ctx context.Context, interval time.Duration, repos []string) {
-	if interval <= 0 || p.gitea == nil {
+	if interval <= 0 || p.forge == nil {
 		return
 	}
 	p.wg.Add(1)
@@ -221,7 +227,7 @@ func (p *Pool) StartReconciler(ctx context.Context, interval time.Duration, repo
 
 // ReconcileOnce checks open PRs across configured or accessible repositories and enqueues unreviewed ones.
 func (p *Pool) ReconcileOnce(ctx context.Context, repos []string) int {
-	if p.gitea == nil || ctx.Err() != nil {
+	if p.forge == nil || ctx.Err() != nil {
 		return 0
 	}
 	targets, err := p.resolveReconcileTargets(ctx, repos)
@@ -237,7 +243,7 @@ func (p *Pool) ReconcileOnce(ctx context.Context, repos []string) int {
 		if ctx.Err() != nil {
 			break
 		}
-		prs, err := p.gitea.ListOpenPullRequests(ctx, target.owner, target.repo)
+		prs, err := p.forge.ListOpenPullRequests(ctx, target.owner, target.repo)
 		if err != nil {
 			hadError = true
 			p.logger.Warn("reconciler failed to list open PRs", "repo", target.owner+"/"+target.repo, "err", err)
@@ -265,18 +271,20 @@ func (p *Pool) ReconcileOnce(ctx context.Context, repos []string) int {
 			if cloneURL == "" {
 				cloneURL = target.cloneURL
 			}
+			isFork := isForkPR(p.forge, pr, pr.Base.Repo)
 			err := p.Enqueue(gitea.ReviewTrigger{
-				Kind:     "pr_review",
-				IsFork:   gitea.IsForkPR(pr, pr.Base.Repo),
-				Owner:    target.owner,
-				Repo:     target.repo,
-				CloneURL: cloneURL,
-				PRNumber: pr.Number,
-				PRTitle:  pr.Title,
-				PRBody:   pr.Body,
-				BaseRef:  pr.Base.Ref,
-				HeadRef:  pr.Head.Ref,
-				HeadSHA:  pr.Head.SHA,
+				Kind:          "pr_review",
+				IsFork:        isFork,
+				Owner:         target.owner,
+				Repo:          target.repo,
+				CloneURL:      cloneURL,
+				PRNumber:      pr.Number,
+				PRTitle:       pr.Title,
+				PRBody:        pr.Body,
+				BaseRef:       pr.Base.Ref,
+				HeadRef:       pr.Head.Ref,
+				HeadSHA:       pr.Head.SHA,
+				HeadRemoteRef: githubPullRef(p.forge, pr.Number),
 			})
 			if err != nil {
 				p.logger.Warn("reconciler failed to enqueue PR", "pr", prKey, "err", err)
@@ -298,6 +306,34 @@ type repoTarget struct {
 	cloneURL string
 }
 
+func githubPullRef(forge provider.ForgeProvider, number int64) string {
+	if forge != nil && forge.Name() == "github" && number > 0 {
+		return fmt.Sprintf("refs/pull/%d/head", number)
+	}
+	return ""
+}
+
+func (p *Pool) addCommentReaction(ctx context.Context, t gitea.ReviewTrigger, content string) error {
+	if p.forge == nil {
+		return nil
+	}
+	if t.CommentIsReview {
+		return p.forge.AddReviewCommentReaction(ctx, t.Owner, t.Repo, t.CommentID, content)
+	}
+	return p.forge.AddCommentReaction(ctx, t.Owner, t.Repo, t.CommentID, content)
+}
+
+func isForkPR(forge provider.ForgeProvider, pr gitea.PullRequest, base gitea.Repository) bool {
+	if gitea.IsForkPR(pr, base) {
+		return true
+	}
+	if forge != nil && forge.Name() == "github" && pr.Head.Repo.ID == 0 && pr.Head.Repo.FullName == "" {
+		// GitHub can return a null head repository after a fork is deleted; fail closed.
+		return true
+	}
+	return false
+}
+
 func (p *Pool) resolveReconcileTargets(ctx context.Context, repos []string) ([]repoTarget, error) {
 	if len(repos) > 0 {
 		out := make([]repoTarget, 0, len(repos))
@@ -309,7 +345,7 @@ func (p *Pool) resolveReconcileTargets(ctx context.Context, repos []string) ([]r
 		}
 		return out, nil
 	}
-	accessible, err := p.gitea.ListAccessibleRepos(ctx)
+	accessible, err := p.forge.ListAccessibleRepos(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -391,14 +427,14 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 
 	// Fast-path for /help command without cloning or calling the LLM.
 	if t.Command == "help" {
-		if !t.DryRun && t.CommentID > 0 && p.gitea != nil {
-			_ = p.gitea.AddCommentReaction(parentCtx, t.Owner, t.Repo, t.CommentID, "eyes")
+		if !t.DryRun && t.CommentID > 0 && p.forge != nil {
+			_ = p.addCommentReaction(parentCtx, t, "eyes")
 		}
 		helpText := p.buildHelpMessage()
 		out.Summary = helpText
 		out.Verdict = "COMMENT"
-		if !t.DryRun && p.gitea != nil {
-			if err := p.gitea.PostComment(parentCtx, t.Owner, t.Repo, t.PRNumber, helpText); err != nil {
+		if !t.DryRun && p.forge != nil {
+			if err := p.forge.PostComment(parentCtx, t.Owner, t.Repo, t.PRNumber, helpText); err != nil {
 				p.finishWithError(prKey, t, startedAt, 0, 0, 0, err)
 				return out, err
 			}
@@ -429,11 +465,11 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 
 	// Collaborator authorization gate for /fix commands.
-	if !t.DryRun && t.Command == "fix" && p.requireCollabFix && t.CommentBy != "" && p.gitea != nil {
-		ok, err := p.gitea.IsCollaborator(parentCtx, t.Owner, t.Repo, t.CommentBy)
+	if !t.DryRun && t.Command == "fix" && p.requireCollabFix && t.CommentBy != "" && p.forge != nil {
+		ok, err := p.forge.IsCollaborator(parentCtx, t.Owner, t.Repo, t.CommentBy)
 		if err != nil || !ok {
 			msg := fmt.Sprintf("Refusing `/fix` command: `@%s` is not a repository collaborator.", t.CommentBy)
-			_ = p.gitea.PostComment(parentCtx, t.Owner, t.Repo, t.PRNumber, msg)
+			_ = p.forge.PostComment(parentCtx, t.Owner, t.Repo, t.PRNumber, msg)
 			p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 			return out, errors.New("unauthorized /fix command")
 		}
@@ -442,8 +478,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	// Hydrate PR metadata if missing (e.g. from an issue_comment webhook or CLI).
 	var prAuthor string
 	if t.HeadSHA == "" || t.CloneURL == "" || t.PRTitle == "" {
-		if p.gitea != nil {
-			pr, err := p.gitea.GetPullRequest(parentCtx, t.Owner, t.Repo, t.PRNumber)
+		if p.forge != nil {
+			pr, err := p.forge.GetPullRequest(parentCtx, t.Owner, t.Repo, t.PRNumber)
 			if err != nil {
 				p.logger.Error("failed to hydrate PR", "pr", prKey, "err", err)
 				return out, err
@@ -466,7 +502,7 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 			if t.PRBody == "" {
 				t.PRBody = pr.Body
 			}
-			if gitea.IsForkPR(pr, pr.Base.Repo) {
+			if isForkPR(p.forge, pr, pr.Base.Repo) {
 				t.IsFork = true
 			}
 			prAuthor = pr.User.Username
@@ -474,11 +510,14 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 				prAuthor = pr.User.Login
 			}
 		}
+		if t.HeadRemoteRef == "" {
+			t.HeadRemoteRef = githubPullRef(p.forge, t.PRNumber)
+		}
 	}
 
 	isCollaborator := false
-	if !t.IsFork && t.CommentBy != "" && p.gitea != nil {
-		if ok, err := p.gitea.IsCollaborator(parentCtx, t.Owner, t.Repo, t.CommentBy); err == nil {
+	if !t.IsFork && t.CommentBy != "" && p.forge != nil {
+		if ok, err := p.forge.IsCollaborator(parentCtx, t.Owner, t.Repo, t.CommentBy); err == nil {
 			isCollaborator = ok
 		}
 	}
@@ -530,18 +569,18 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 
 	p.logger.Info("starting agent run", "worker_id", workerID, "pr", prKey, "kind", t.Kind, "command", t.Command, "dry_run", t.DryRun, "sha", t.HeadSHA)
 
-	if !t.DryRun && p.gitea != nil {
+	if !t.DryRun && p.forge != nil {
 		if t.CommentID > 0 {
-			_ = p.gitea.AddCommentReaction(jobCtx, t.Owner, t.Repo, t.CommentID, "eyes")
+			_ = p.addCommentReaction(jobCtx, t, "eyes")
 		} else if t.PRNumber > 0 {
-			_ = p.gitea.AddIssueReaction(jobCtx, t.Owner, t.Repo, t.PRNumber, "eyes")
+			_ = p.forge.AddIssueReaction(jobCtx, t.Owner, t.Repo, t.PRNumber, "eyes")
 		}
 		if t.Kind == "pr_review" {
-			_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "pending", "CodeSpider review in progress")
+			_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "pending", "CodeSpider review in progress")
 		}
 	}
 
-	diff, err := p.gitea.GetPullRequestDiff(jobCtx, t.Owner, t.Repo, t.PRNumber)
+	diff, err := p.forge.GetPullRequestDiff(jobCtx, t.Owner, t.Repo, t.PRNumber)
 	if err != nil {
 		if !t.DryRun {
 			p.finishWithError(prKey, t, startedAt, 0, 0, 0, fmt.Errorf("fetch diff: %w", err))
@@ -553,9 +592,17 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	if p.workspace != nil && t.CloneURL != "" {
 		var cleanup func()
 		if t.DryRun {
-			wtDir, cleanup, err = p.workspace.CheckoutPRReadOnly(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA)
+			if t.HeadRemoteRef != "" {
+				wtDir, cleanup, err = p.workspace.CheckoutPRReadOnlyWithRef(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA, t.HeadRemoteRef)
+			} else {
+				wtDir, cleanup, err = p.workspace.CheckoutPRReadOnly(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA)
+			}
 		} else {
-			wtDir, cleanup, err = p.workspace.CheckoutPR(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA)
+			if t.HeadRemoteRef != "" {
+				wtDir, cleanup, err = p.workspace.CheckoutPRWithRef(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA, t.HeadRemoteRef)
+			} else {
+				wtDir, cleanup, err = p.workspace.CheckoutPR(jobCtx, t.Owner, t.Repo, t.CloneURL, t.HeadSHA)
+			}
 		}
 		if err != nil {
 			p.logger.Warn("worktree checkout failed, continuing with diff-only tools", "pr", prKey, "err", err)
@@ -585,8 +632,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" && !repoCfg.Enabled {
 		p.logger.Info("skipping PR review per .codespider.yaml", "pr", prKey)
-		if p.gitea != nil {
-			_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped by repository config")
+		if p.forge != nil {
+			_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped by repository config")
 		}
 		p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 		return out, nil
@@ -594,8 +641,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" {
 		if reason := repoCfg.SkipReason(t.BaseRef, t.PRTitle); reason != "" {
 			p.logger.Info("skipping automatic PR review per .codespider.yaml", "pr", prKey, "reason", reason)
-			if p.gitea != nil {
-				_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped: "+reason)
+			if p.forge != nil {
+				_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped: "+reason)
 			}
 			p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 			return out, nil
@@ -609,8 +656,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 		}
 		if !t.DryRun && t.Kind == "pr_review" && strings.TrimSpace(diff) == "" {
 			p.logger.Info("skipping PR review; all changed files matched ignore_paths", "pr", prKey)
-			if p.gitea != nil {
-				_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped (only ignored paths changed)")
+			if p.forge != nil {
+				_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped (only ignored paths changed)")
 			}
 			p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 			return out, nil
@@ -722,8 +769,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 		out.Summary = "Automated check: changes are documentation/formatting-only with 0 deterministic or secret findings."
 		out.Stages = stages
 		out.DurationMs = time.Since(startedAt).Milliseconds()
-		if p.gitea != nil && policy.CheckSideEffectAllowed(policy.EffectSetCommitStatus, perms) == nil {
-			_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider: equivalent/docs-only check passed")
+		if p.forge != nil && policy.CheckSideEffectAllowed(policy.EffectSetCommitStatus, perms) == nil {
+			_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider: equivalent/docs-only check passed")
 		}
 		p.metrics.RecordRun(t.Kind, "success", 0, 0, 0, time.Since(startedAt))
 		if p.store != nil {
@@ -771,7 +818,7 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 		WorktreeDir:           wtDir,
 		BaseWorktreeDir:       baseWtDir,
 		Workspace:             p.workspace,
-		Gitea:                 p.gitea,
+		Forge:                 p.forge,
 		Sandbox:               p.sandbox,
 		Audit:                 auditPtr,
 		Permissions:           &perms,
@@ -850,8 +897,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 
 	// Fallback: if the agent returned text without calling submit_review/reply_comment, post it.
-	if !t.DryRun && !res.Submitted && res.FinalText != "" && p.gitea != nil && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
-		if postErr := p.gitea.PostComment(jobCtx, t.Owner, t.Repo, t.PRNumber, res.FinalText); postErr != nil {
+	if !t.DryRun && !res.Submitted && res.FinalText != "" && p.forge != nil && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
+		if postErr := p.forge.PostComment(jobCtx, t.Owner, t.Repo, t.PRNumber, res.FinalText); postErr != nil {
 			p.finishWithError(prKey, t, startedAt, res.StepsUsed, res.TokensUsed, res.InlineComments, postErr)
 			return out, postErr
 		}
@@ -876,8 +923,8 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	if !t.DryRun {
 		p.runPostReviewAutomations(jobCtx, t, perms, repoCfg, diff, wtDir, prAuthor, res, secretFindings)
 
-		if t.Kind == "pr_review" && p.gitea != nil && policy.CheckSideEffectAllowed(policy.EffectSetCommitStatus, perms) == nil {
-			_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success",
+		if t.Kind == "pr_review" && p.forge != nil && policy.CheckSideEffectAllowed(policy.EffectSetCommitStatus, perms) == nil {
+			_ = p.forge.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success",
 				fmt.Sprintf("CodeSpider completed (%d inline comments)", res.InlineComments))
 		}
 
@@ -936,8 +983,8 @@ func (p *Pool) finishWithError(prKey string, t gitea.ReviewTrigger, startedAt ti
 	status := "failed"
 	if errors.Is(err, context.Canceled) {
 		status = "canceled"
-	} else if t.Kind == "pr_review" && p.gitea != nil {
-		_ = p.gitea.SetCommitStatus(context.Background(), t.Owner, t.Repo, t.HeadSHA, "error", "CodeSpider review failed")
+	} else if t.Kind == "pr_review" && p.forge != nil {
+		_ = p.forge.SetCommitStatus(context.Background(), t.Owner, t.Repo, t.HeadSHA, "error", "CodeSpider review failed")
 	}
 
 	dur := time.Since(startedAt)

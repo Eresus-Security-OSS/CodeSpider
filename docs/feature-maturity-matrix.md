@@ -7,6 +7,7 @@ Never equate compilation or mocked unit tests with production validation. Where 
 | Subsystem / Feature | Maturity State | Evidence & Verification | Known Gaps / Blockers |
 | --- | --- | --- | --- |
 | Webhook HMAC-SHA256 & Draft/Bot Filtering | **Integration tested** | `internal/gitea/webhook_test.go`, `internal/worker/integration_test.go` | Live Gitea instance webhook delivery not run on this host (**Blocked**: `gitea` binary not installed). |
+| GitHub daemon provider | **Integration tested** | `internal/provider/github`, `internal/worker`, `cmd/codespider` | Signed webhook normalization, config selection, App token refresh, review-thread resolution, and REST/GraphQL requests use offline tests; no live GitHub.com or Enterprise validation. See `docs/github-provider.md`. |
 | Git Mirroring, Worktree Isolation & Atomic Push | **Integration tested** | `internal/workspace/workspace_test.go`, `internal/worker/integration_test.go` (`git-http-backend` Smart-HTTP) | Uses `--atomic --force-with-lease=<branch>:<sha>` and hook/filter/submodule/ext-diff lockdown (`core.hooksPath=/dev/null`). |
 | Capability Auth & Fail-Closed Policy | **Implemented** | `internal/policy/policy_test.go` | Fork PR isolation, `DryRun` side-effect stripping, `CheckSideEffectAllowed` on every mutation site. |
 | Expiring Sessions, CSRF & SSE Redaction | **Integration tested** | `cmd/codespider/main_test.go`, `internal/security/redact_test.go` | 12h HMAC-signed expiring cookies, `X-CSRF-Token` + `Origin`/`Sec-Fetch-Site`, `security.RedactText` on SSE. |

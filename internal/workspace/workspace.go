@@ -25,9 +25,38 @@ const maxDiffBytes = 5 << 20
 type Manager struct {
 	baseDir       string
 	token         string
+	tokenProvider func(context.Context) (string, error)
+	gitUsername   string
+	tokenMu       sync.RWMutex
 	allowedOrigin string
 	mu            sync.Mutex
 	repoMu        map[string]*sync.Mutex
+}
+
+// WithTokenProvider supplies refreshed credentials for each git operation.
+func (m *Manager) WithTokenProvider(provider func(context.Context) (string, error)) *Manager {
+	m.tokenProvider = provider
+	return m
+}
+
+// WithGitUsername sets the HTTPS git username used with token-based credentials.
+func (m *Manager) WithGitUsername(username string) *Manager { m.gitUsername = username; return m }
+
+func (m *Manager) accessToken(ctx context.Context) (string, error) {
+	m.tokenMu.RLock()
+	token := m.token
+	m.tokenMu.RUnlock()
+	if m.tokenProvider != nil {
+		var err error
+		token, err = m.tokenProvider(ctx)
+		if err != nil {
+			return "", err
+		}
+		m.tokenMu.Lock()
+		m.token = token
+		m.tokenMu.Unlock()
+	}
+	return token, nil
 }
 
 // NewManager creates a workspace Manager rooted at baseDir.
@@ -43,7 +72,11 @@ func NewManager(baseDir, giteaToken string) *Manager {
 // to the scheme and host of baseURL (e.g. "https://gitea.example.com").
 func (m *Manager) WithAllowedOrigin(baseURL string) *Manager {
 	if u, err := url.Parse(strings.TrimSpace(baseURL)); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
-		m.allowedOrigin = strings.ToLower(u.Scheme + "://" + u.Host)
+		host := u.Host
+		if strings.EqualFold(u.Hostname(), "api.github.com") {
+			host = "github.com"
+		}
+		m.allowedOrigin = strings.ToLower(u.Scheme + "://" + host)
 	}
 	return m
 }
@@ -69,21 +102,35 @@ func (m *Manager) validateCloneOrigin(rawURL string) error {
 // CheckoutPR ensures the repo mirror is up to date and creates a temporary worktree at sha.
 // The returned cleanup function removes the temporary worktree.
 func (m *Manager) CheckoutPR(ctx context.Context, owner, repo, cloneURL, sha string) (worktreeDir string, cleanup func(), err error) {
-	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, false)
+	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, "", false)
+}
+
+// CheckoutPRWithRef fetches a provider-advertised PR ref before checking out its head SHA.
+func (m *Manager) CheckoutPRWithRef(ctx context.Context, owner, repo, cloneURL, sha, remoteRef string) (string, func(), error) {
+	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, remoteRef, false)
 }
 
 // CheckoutPRReadOnly creates a temporary worktree at sha without mutating an existing mirror
 // via `git fetch` when the requested commit is already present locally (used by dry-run).
 func (m *Manager) CheckoutPRReadOnly(ctx context.Context, owner, repo, cloneURL, sha string) (worktreeDir string, cleanup func(), err error) {
-	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, true)
+	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, "", true)
 }
 
-func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha string, readOnly bool) (worktreeDir string, cleanup func(), err error) {
+// CheckoutPRReadOnlyWithRef is the read-only counterpart of CheckoutPRWithRef.
+func (m *Manager) CheckoutPRReadOnlyWithRef(ctx context.Context, owner, repo, cloneURL, sha, remoteRef string) (string, func(), error) {
+	return m.checkoutPR(ctx, owner, repo, cloneURL, sha, remoteRef, true)
+}
+
+func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha, remoteRef string, readOnly bool) (worktreeDir string, cleanup func(), err error) {
 	if cloneURL == "" {
 		return "", func() {}, fmt.Errorf("empty cloneURL for %s/%s", owner, repo)
 	}
 	if err := m.validateCloneOrigin(cloneURL); err != nil {
 		return "", func() {}, err
+	}
+	token, tokenErr := m.accessToken(ctx)
+	if tokenErr != nil {
+		return "", func() {}, fmt.Errorf("get git access token: %w", tokenErr)
 	}
 	lock := m.lockFor(owner + "/" + repo)
 	lock.Lock()
@@ -94,7 +141,8 @@ func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha str
 		return "", func() {}, err
 	}
 
-	authArgs := gitAuthArgs(cloneURL, m.token)
+	authArgs := gitAuthArgs(cloneURL, token, m.gitUsername)
+	headAlreadyPresent := false
 
 	if _, statErr := os.Stat(mirrorDir); os.IsNotExist(statErr) {
 		args := append(append([]string(nil), authArgs...), "clone", "--bare", cloneURL, mirrorDir)
@@ -106,6 +154,7 @@ func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha str
 		if readOnly && IsValidCommitSHA(sha) {
 			if _, revErr := m.runGitOutput(ctx, mirrorDir, 1024, "rev-parse", "--verify", sha+"^{commit}"); revErr == nil {
 				needFetch = false
+				headAlreadyPresent = true
 			}
 		}
 		if needFetch {
@@ -113,6 +162,17 @@ func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha str
 			if err := m.runGit(ctx, mirrorDir, args...); err != nil {
 				return "", func() {}, fmt.Errorf("git fetch: %w", err)
 			}
+		}
+	}
+	if remoteRef != "" && !headAlreadyPresent {
+		prNum, ok := githubPullRefNumber(remoteRef)
+		if !ok {
+			return "", func() {}, fmt.Errorf("unsupported pull request ref %q", remoteRef)
+		}
+		destination := fmt.Sprintf("refs/codespider/pull/%s/head", prNum)
+		args := append(append([]string(nil), authArgs...), "fetch", "--no-tags", cloneURL, "+"+remoteRef+":"+destination)
+		if err := m.runGit(ctx, mirrorDir, args...); err != nil {
+			return "", func() {}, fmt.Errorf("fetch pull request head ref: %w", err)
 		}
 	}
 
@@ -143,6 +203,23 @@ func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha str
 	return wtDir, cleanupFn, nil
 }
 
+func githubPullRefNumber(ref string) (string, bool) {
+	const prefix, suffix = "refs/pull/", "/head"
+	if !strings.HasPrefix(ref, prefix) || !strings.HasSuffix(ref, suffix) {
+		return "", false
+	}
+	n := strings.TrimSuffix(strings.TrimPrefix(ref, prefix), suffix)
+	if n == "" {
+		return "", false
+	}
+	for _, c := range n {
+		if c < '0' || c > '9' {
+			return "", false
+		}
+	}
+	return n, true
+}
+
 // CommitAndPush stages all changes in worktreeDir, commits them, and pushes to headBranch on cloneURL.
 func (m *Manager) CommitAndPush(ctx context.Context, worktreeDir, cloneURL, headBranch, authorName, commitMsg string) (string, error) {
 	return m.CommitAndPushWithGuard(ctx, worktreeDir, cloneURL, headBranch, "", authorName, commitMsg)
@@ -166,7 +243,11 @@ func (m *Manager) CommitAndPushWithGuard(ctx context.Context, worktreeDir, clone
 		authorName = "CodeSpider"
 	}
 
-	authArgs := gitAuthArgs(cloneURL, m.token)
+	token, err := m.accessToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get git access token: %w", err)
+	}
+	authArgs := gitAuthArgs(cloneURL, token, m.gitUsername)
 	if expectedHeadSHA != "" {
 		if !IsValidCommitSHA(expectedHeadSHA) {
 			return "", fmt.Errorf("invalid expectedHeadSHA %q", expectedHeadSHA)
@@ -668,11 +749,18 @@ func (m *Manager) runGitOutput(ctx context.Context, dir string, maxStdout int, a
 }
 
 func (m *Manager) redact(s string) string {
-	if m.token == "" {
+	m.tokenMu.RLock()
+	token := m.token
+	m.tokenMu.RUnlock()
+	if token == "" {
 		return s
 	}
-	basic := base64.StdEncoding.EncodeToString([]byte("oauth2:" + m.token))
-	return redactSecrets(s, m.token, basic)
+	username := m.gitUsername
+	if username == "" {
+		username = "oauth2"
+	}
+	basic := base64.StdEncoding.EncodeToString([]byte(username + ":" + token))
+	return redactSecrets(s, token, basic)
 }
 
 func redactSecrets(s string, secrets ...string) string {
@@ -684,7 +772,7 @@ func redactSecrets(s string, secrets ...string) string {
 	return s
 }
 
-func gitAuthArgs(rawURL, token string) []string {
+func gitAuthArgs(rawURL, token, username string) []string {
 	if token == "" {
 		return nil
 	}
@@ -692,7 +780,10 @@ func gitAuthArgs(rawURL, token string) []string {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil
 	}
-	basic := base64.StdEncoding.EncodeToString([]byte("oauth2:" + token))
+	if username == "" {
+		username = "oauth2"
+	}
+	basic := base64.StdEncoding.EncodeToString([]byte(username + ":" + token))
 	return []string{"-c", "http.extraHeader=Authorization: Basic " + basic}
 }
 
