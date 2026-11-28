@@ -139,9 +139,6 @@ ghcr.io/eresus-security-oss/codespider:latest
 
 The container uses a Distroless Debian 13 runtime.
 
-To publish CodeSpider on a different host port, see
-[Docker Compose ports and health checks](docs/configuration.md#docker-compose-ports-and-health-checks).
-
 ### Build from Source
 
 ```bash
