@@ -34,9 +34,13 @@ type Config struct {
 	LLMFastModel  string
 	LLMTimeout    time.Duration
 	LLMMaxRetries int
+	// LLMReasoningEffort, when set, is sent as `reasoning_effort` on every chat request
+	// (none|minimal|low|medium|high). Empty omits the field.
+	LLMReasoningEffort string
 
 	AgentMaxSteps             int
 	AgentMaxTokens            int
+	AgentJobTimeout           time.Duration // wall-clock budget for one PR review job
 	AgentSkillsDir            string
 	AgentDefaultSkills        []string
 	AgentEnableWrite          bool
@@ -72,6 +76,7 @@ func Default() Config {
 		LLMTimeout:                120 * time.Second,
 		LLMMaxRetries:             2,
 		AgentMaxSteps:             12,
+		AgentJobTimeout:           5 * time.Minute,
 		AgentMaxTokens:            32000,
 		AgentSkillsDir:            "./skills",
 		AgentDefaultSkills:        []string{"security", "code-quality", "testing"},
@@ -150,6 +155,14 @@ func (c Config) Validate() error {
 	}
 	if c.AgentMaxSteps < 1 {
 		errs = append(errs, fmt.Errorf("agent.max_steps must be >= 1, got %d", c.AgentMaxSteps))
+	}
+	switch c.LLMReasoningEffort {
+	case "", "none", "minimal", "low", "medium", "high":
+	default:
+		errs = append(errs, fmt.Errorf("llm.reasoning_effort must be one of none, minimal, low, medium, high, got %q", c.LLMReasoningEffort))
+	}
+	if c.AgentJobTimeout < 30*time.Second || c.AgentJobTimeout > 2*time.Hour {
+		errs = append(errs, fmt.Errorf("agent.job_timeout_seconds must be between 30 and 7200, got %s", c.AgentJobTimeout))
 	}
 	if c.UpdateCheckInterval < 0 {
 		errs = append(errs, fmt.Errorf("daemon.update_check_hours must be >= 0, got %s", c.UpdateCheckInterval))
@@ -339,6 +352,14 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 			return err
 		}
 		cfg.LLMMaxRetries = n
+	case "llm.reasoning_effort":
+		cfg.LLMReasoningEffort = strings.ToLower(val)
+	case "agent.job_timeout_seconds":
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return err
+		}
+		cfg.AgentJobTimeout = time.Duration(n) * time.Second
 	case "agent.max_steps":
 		n, err := strconv.Atoi(val)
 		if err != nil {

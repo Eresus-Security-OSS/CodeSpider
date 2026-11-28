@@ -37,9 +37,11 @@ llm:
   # fast_model: "gpt-5-mini"
   timeout_seconds: 120
   max_retries: 2
+  # reasoning_effort: "none"  # none|minimal|low|medium|high; sent on every request, leave unset unless your endpoint supports it
 
 agent:
   max_steps: 12
+  # job_timeout_seconds: 300  # per-PR job budget (30-7200); raise for slow self-hosted models
   max_tokens_per_run: 32000
   skills_dir: "./skills"
   default_skills:

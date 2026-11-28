@@ -68,7 +68,8 @@ func runReviewCLI(args []string) int {
 	giteaClient := gitea.NewClient(cfg.GiteaBaseURL, cfg.GiteaToken)
 	wsManager := workspace.NewManager(cfg.DataDir, cfg.GiteaToken).WithAllowedOrigin(cfg.GiteaBaseURL)
 	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout).
-		WithRetry(cfg.LLMMaxRetries, time.Second)
+		WithRetry(cfg.LLMMaxRetries, time.Second).
+		WithReasoningEffort(cfg.LLMReasoningEffort)
 
 	runner := agent.NewRunner(llmClient, agent.Options{
 		MaxSteps:            cfg.AgentMaxSteps,
@@ -93,6 +94,7 @@ func runReviewCLI(args []string) int {
 		AllowSameOwnerCrossRepo:   cfg.AllowSameOwnerCrossRepo,
 		CrossRepoAllowlist:        cfg.CrossRepoAllowlist,
 		SandboxMode:               cfg.SandboxMode,
+		JobTimeout:                cfg.AgentJobTimeout,
 		AlertWebhookURL:           cfg.AlertWebhookURL,
 		Gitea:                     giteaClient,
 		Workspace:                 wsManager,

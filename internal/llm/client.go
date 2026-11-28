@@ -15,12 +15,13 @@ import (
 
 // Client calls any OpenAI-compatible /v1/chat/completions endpoint.
 type Client struct {
-	baseURL        string
-	apiKey         string
-	model          string
-	httpClient     *http.Client
-	maxRetries     int
-	retryBaseDelay time.Duration
+	baseURL         string
+	apiKey          string
+	model           string
+	httpClient      *http.Client
+	maxRetries      int
+	retryBaseDelay  time.Duration
+	reasoningEffort string
 }
 
 // NewClient creates a new LLM client with default retry settings.
@@ -49,6 +50,14 @@ func (c *Client) WithRetry(maxRetries int, baseDelay time.Duration) *Client {
 	if baseDelay > 0 {
 		c.retryBaseDelay = baseDelay
 	}
+	return c
+}
+
+// WithReasoningEffort sends `reasoning_effort` with every chat request. An empty value omits it.
+// Reasoning-capable local models (for example Qwen via Ollama) can spend most of a review in
+// hidden thinking tokens, so "none" or "low" can make slow hardware practical.
+func (c *Client) WithReasoningEffort(effort string) *Client {
+	c.reasoningEffort = strings.TrimSpace(effort)
 	return c
 }
 
@@ -116,9 +125,10 @@ type ChatResponse struct {
 }
 
 type chatRequest struct {
-	Model    string           `json:"model"`
-	Messages []Message        `json:"messages"`
-	Tools    []ToolDefinition `json:"tools,omitempty"`
+	Model           string           `json:"model"`
+	Messages        []Message        `json:"messages"`
+	Tools           []ToolDefinition `json:"tools,omitempty"`
+	ReasoningEffort string           `json:"reasoning_effort,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -134,9 +144,10 @@ type chatCompletionResponse struct {
 // Chat sends a conversation and tool definitions to the LLM and returns the next assistant turn.
 func (c *Client) Chat(ctx context.Context, messages []Message, tools []ToolDefinition) (ChatResponse, error) {
 	reqBody := chatRequest{
-		Model:    c.model,
-		Messages: messages,
-		Tools:    tools,
+		Model:           c.model,
+		Messages:        messages,
+		Tools:           tools,
+		ReasoningEffort: c.reasoningEffort,
 	}
 	raw, err := json.Marshal(reqBody)
 	if err != nil {
