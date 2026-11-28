@@ -624,6 +624,9 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 
 	t.RepoInstructions = repoCfg.Instructions
+	if pathInstr := repoCfg.InstructionsForPaths(repoconfig.ExtractChangedPaths(diff)); pathInstr != "" {
+		t.RepoInstructions = strings.TrimSpace(t.RepoInstructions + "\n\n" + pathInstr)
+	}
 	if len(t.RepoSkills) == 0 {
 		t.RepoSkills = repoCfg.Skills
 	}

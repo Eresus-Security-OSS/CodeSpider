@@ -81,8 +81,9 @@ func buildStickyWalkthrough(t gitea.ReviewTrigger, diff string, res agent.RunRes
 	b.WriteString(stickySummaryMarker + "\n")
 	b.WriteString("## CodeSpider Review Summary\n\n")
 	fmt.Fprintf(&b, "- **Commit:** `%s` | **Model:** `%s` | **Verdict:** `%s`\n", shortSHA(t.HeadSHA), res.ModelUsed, nonEmpty(res.Verdict, "COMMENT"))
-	fmt.Fprintf(&b, "- **Findings:** `%d` inline comments | **Blue-Team Refuted:** `%d` | **Secret Alerts:** `%d`\n\n", res.InlineComments, res.BlueTeamRefuted, len(secrets))
-
+	fmt.Fprintf(&b, "- **Findings:** `%d` inline comments | **Blue-Team Refuted:** `%d` | **Secret Alerts:** `%d`\n", res.InlineComments, res.BlueTeamRefuted, len(secrets))
+	writeChangeOverview(&b, diff)
+	b.WriteString("\n")
 	if len(paths) > 0 {
 		b.WriteString("```mermaid\nflowchart LR\n  PR[\"PR Changes\"]\n")
 		areas := topLevelAreas(paths)

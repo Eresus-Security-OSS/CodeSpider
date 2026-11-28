@@ -31,6 +31,7 @@ type Config struct {
 	AdversarialSecurity *bool
 	ForbidImports       map[string][]string
 	Instructions        string
+	PathInstructions    []PathInstruction
 }
 
 // Load reads .codespider.yaml/.yml and repository instruction files from worktreeDir.
@@ -220,6 +221,10 @@ func parseYAMLSubset(content string, cfg *Config) {
 					cfg.IgnorePaths = append(cfg.IgnorePaths, item)
 				case "skills":
 					cfg.Skills = append(cfg.Skills, item)
+				case "path_instructions":
+					if pi, ok := parsePathInstruction(item); ok {
+						cfg.PathInstructions = append(cfg.PathInstructions, pi)
+					}
 				}
 			}
 			continue
@@ -253,6 +258,9 @@ func parseYAMLSubset(content string, cfg *Config) {
 					}
 				}
 			}
+		case "path_instructions":
+			// Only the block-list form is supported: each item is "<glob>: <instruction>".
+			inListKey = "path_instructions"
 		case "skills":
 			if val == "" {
 				inListKey = "skills"
