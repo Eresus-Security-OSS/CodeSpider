@@ -236,3 +236,49 @@ func TestWorkerCollaboratorGateForFixAndExecuteSyncDryRun(t *testing.T) {
 		t.Fatal("dry-run must not trigger alert webhook")
 	}
 }
+
+func TestReconcileOnceMarksForkPRs(t *testing.T) {
+	giteaSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]gitea.PullRequest{
+			{
+				Number: 10,
+				Title:  "Fork PR",
+				User:   gitea.User{Username: "outsider"},
+				Base:   gitea.BranchRef{Ref: "main", Repo: gitea.Repository{ID: 1, FullName: "acme/api", CloneURL: "https://gitea.local/acme/api.git"}},
+				Head:   gitea.BranchRef{Ref: "patch-1", SHA: "1111111", Repo: gitea.Repository{ID: 2, FullName: "outsider/api"}},
+			},
+			{
+				Number: 11,
+				Title:  "Internal PR",
+				User:   gitea.User{Username: "alice"},
+				Base:   gitea.BranchRef{Ref: "main", Repo: gitea.Repository{ID: 1, FullName: "acme/api", CloneURL: "https://gitea.local/acme/api.git"}},
+				Head:   gitea.BranchRef{Ref: "feat", SHA: "2222222", Repo: gitea.Repository{ID: 1, FullName: "acme/api"}},
+			},
+		})
+	}))
+	defer giteaSrv.Close()
+
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := NewPool(Config{
+		Workers: 1,
+		Gitea:   gitea.NewClient(giteaSrv.URL, "tok"),
+		Store:   st,
+		Metrics: metrics.NewCollector(),
+	})
+
+	if n := pool.ReconcileOnce(context.Background(), []string{"acme/api"}); n != 2 {
+		t.Fatalf("expected 2 enqueued PRs, got %d", n)
+	}
+	t1 := <-pool.queue
+	t2 := <-pool.queue
+	if t1.PRNumber != 10 || !t1.IsFork {
+		t.Fatalf("expected PR #10 from fork to have IsFork=true, got %+v", t1)
+	}
+	if t2.PRNumber != 11 || t2.IsFork {
+		t.Fatalf("expected PR #11 from same repo to have IsFork=false, got %+v", t2)
+	}
+}

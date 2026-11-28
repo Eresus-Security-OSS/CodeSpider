@@ -712,6 +712,8 @@ func isValidCommitSHA(sha string) bool {
 func sanitize(s string) string {
 	s = strings.ReplaceAll(s, "..", "_")
 	s = strings.ReplaceAll(s, "/", "_")
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, ":", "_")
 	return s
 }
 
