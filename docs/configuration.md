@@ -43,30 +43,6 @@ String values support optional `${ENV_VAR}` expansion (for example, `api_key: "$
 | `daemon.reconcile_interval_seconds` | `300` | No | Interval for periodic reconciliation |
 | `daemon.log_level` | `info` | No | Log level (`debug`, `info`, `warn`, `error`) |
 
-## Docker Compose ports and health checks
-
-Both Compose files publish port `8080` on the host and forward it to port
-`8080` in the container. If only the host port is in use, change the `ports`
-entry in the Compose file you run to `"9090:8080"` and leave
-`server.listen_addr: ":8080"` unchanged. Update any webhook URL that uses
-the published host port. The container health check still uses port `8080`.
-
-If you change the port **inside** the container, update `server.listen_addr`
-in `codespider.yaml`, the container side of the port mapping, and the health
-check URL together. For example, with `server.listen_addr: ":9090"`, set
-these keys on the existing `codespider` service:
-
-```yaml
-ports:
-  - "9090:9090"
-healthcheck:
-  test: ["CMD", "/app/codespider", "healthcheck", "-addr", "http://127.0.0.1:9090/healthz"]
-```
-
-Without the `healthcheck.test` override, the image probes
-`http://127.0.0.1:8080/healthz` and reports an unhealthy container even if
-CodeSpider is listening on the new port.
-
 ## Repository Configuration (`.codespider.yaml` & `AGENTS.md`)
 
 CodeSpider automatically reads repository-level instructions and configuration from the checked-out PR worktree:
