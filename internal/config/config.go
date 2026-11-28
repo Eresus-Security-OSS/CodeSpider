@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,8 +13,10 @@ import (
 
 // Config holds all configuration for the 24/7 CodeSpider daemon.
 type Config struct {
-	ListenAddr string
-	AdminToken string
+	ListenAddr    string
+	AdminToken    string
+	ForgeProvider string
+	ForgeRepos    []string
 
 	GiteaBaseURL              string
 	GiteaToken                string
@@ -27,6 +30,14 @@ type Config struct {
 	IgnoreBotPRs              bool
 	StickySummary             bool
 	RequireCollaboratorForFix bool
+	GitHubBaseURL             string
+	GitHubToken               string
+	GitHubAppID               int64
+	GitHubInstallationID      int64
+	GitHubAppPrivateKeyPath   string
+	GitHubWebhookSecret       string
+	GitHubBotUsername         string
+	GitHubRepos               []string
 
 	LLMBaseURL    string
 	LLMAPIKey     string
@@ -60,7 +71,10 @@ type Config struct {
 func Default() Config {
 	return Config{
 		ListenAddr:                ":8080",
+		ForgeProvider:             "gitea",
 		GiteaBotUsername:          "codespider",
+		GitHubBaseURL:             "https://api.github.com",
+		GitHubBotUsername:         "codespider",
 		AllowUnsignedWebhooks:     false,
 		AllowSameOwnerCrossRepo:   false,
 		SkipDraftPRs:              true,
@@ -118,6 +132,8 @@ func LoadFromFile(path string) (Config, error) {
 	}
 
 	cfg.GiteaBaseURL = strings.TrimRight(cfg.GiteaBaseURL, "/")
+	cfg.GitHubBaseURL = strings.TrimRight(cfg.GitHubBaseURL, "/")
+	cfg.ForgeProvider = strings.ToLower(strings.TrimSpace(cfg.ForgeProvider))
 	cfg.LLMBaseURL = strings.TrimRight(cfg.LLMBaseURL, "/")
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))
 
@@ -130,11 +146,34 @@ func LoadFromFile(path string) (Config, error) {
 // Validate checks that required configuration fields are present and sane.
 func (c Config) Validate() error {
 	var errs []error
-	if c.GiteaBaseURL == "" {
-		errs = append(errs, errors.New("gitea.base_url is required"))
-	}
-	if c.GiteaToken == "" {
-		errs = append(errs, errors.New("gitea.token is required"))
+	switch c.ForgeProvider {
+	case "gitea":
+		if c.GiteaBaseURL == "" {
+			errs = append(errs, errors.New("gitea.base_url is required"))
+		}
+		if c.GiteaToken == "" {
+			errs = append(errs, errors.New("gitea.token is required"))
+		}
+	case "github":
+		appConfigured := c.GitHubAppID != 0 || c.GitHubInstallationID != 0 || c.GitHubAppPrivateKeyPath != ""
+		if appConfigured && (c.GitHubAppID <= 0 || c.GitHubInstallationID <= 0 || c.GitHubAppPrivateKeyPath == "") {
+			errs = append(errs, errors.New("github.app_id, github.installation_id, and github.app_private_key_path must all be set together"))
+		}
+		if appConfigured && c.GitHubToken != "" {
+			errs = append(errs, errors.New("configure either github.token or GitHub App credentials, not both"))
+		}
+		if !appConfigured && c.GitHubToken == "" {
+			errs = append(errs, errors.New("github.token is required when forge.provider is github"))
+		}
+		if c.GitHubWebhookSecret == "" {
+			errs = append(errs, errors.New("github.webhook_secret is required when forge.provider is github"))
+		}
+		u, err := url.Parse(c.GitHubBaseURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			errs = append(errs, errors.New("github.api_url must be an HTTPS URL without user info, query, or fragment"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("forge.provider must be gitea or github, got %q", c.ForgeProvider))
 	}
 	if c.LLMBaseURL == "" {
 		errs = append(errs, errors.New("llm.base_url is required"))
@@ -163,6 +202,7 @@ func parseYAML(content string, cfg *Config) error {
 	inListKey := ""
 	defaultSkillsCleared := false
 	giteaReposCleared := false
+	githubReposCleared := false
 	crossRepoCleared := false
 
 	for lineNo, rawLine := range lines {
@@ -195,6 +235,22 @@ func parseYAML(content string, cfg *Config) error {
 				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
 				if item != "" {
 					cfg.GiteaRepos = append(cfg.GiteaRepos, item)
+				}
+				continue
+			case "github.repos":
+				if !githubReposCleared {
+					cfg.GitHubRepos = nil
+					githubReposCleared = true
+				}
+				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				if item != "" {
+					cfg.GitHubRepos = append(cfg.GitHubRepos, item)
+				}
+				continue
+			case "forge.repos":
+				item := unquoteAndExpand(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				if item != "" {
+					cfg.ForgeRepos = append(cfg.ForgeRepos, item)
 				}
 				continue
 			case "gitea.cross_repo_allowlist":
@@ -247,6 +303,15 @@ func parseYAML(content string, cfg *Config) error {
 					cfg.GiteaRepos = nil
 					giteaReposCleared = true
 				}
+			case "github.repos":
+				inListKey = fullKey
+				if !githubReposCleared {
+					cfg.GitHubRepos = nil
+					githubReposCleared = true
+				}
+			case "forge.repos":
+				inListKey = fullKey
+				cfg.ForgeRepos = nil
 			case "gitea.cross_repo_allowlist":
 				inListKey = fullKey
 				if !crossRepoCleared {
@@ -267,6 +332,34 @@ func parseYAML(content string, cfg *Config) error {
 func applyField(fullKey, rawVal string, cfg *Config) error {
 	val := unquoteAndExpand(rawVal)
 	switch fullKey {
+	case "forge.provider":
+		cfg.ForgeProvider = val
+	case "forge.repos":
+		cfg.ForgeRepos = parseInlineList(rawVal)
+	case "forge.skip_draft_prs":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.SkipDraftPRs = b
+	case "forge.ignore_bot_prs":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.IgnoreBotPRs = b
+	case "forge.sticky_summary":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.StickySummary = b
+	case "forge.require_collaborator_for_fix":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return err
+		}
+		cfg.RequireCollaboratorForFix = b
 	case "server.listen_addr", "listen_addr":
 		cfg.ListenAddr = val
 	case "server.admin_token", "admin_token":
@@ -319,6 +412,30 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 			return err
 		}
 		cfg.RequireCollaboratorForFix = b
+	case "github.api_url", "github.base_url":
+		cfg.GitHubBaseURL = val
+	case "github.token":
+		cfg.GitHubToken = val
+	case "github.app_id":
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return err
+		}
+		cfg.GitHubAppID = n
+	case "github.installation_id":
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return err
+		}
+		cfg.GitHubInstallationID = n
+	case "github.app_private_key_path":
+		cfg.GitHubAppPrivateKeyPath = val
+	case "github.webhook_secret":
+		cfg.GitHubWebhookSecret = val
+	case "github.bot_username":
+		cfg.GitHubBotUsername = val
+	case "github.repos":
+		cfg.GitHubRepos = parseInlineList(rawVal)
 	case "llm.base_url":
 		cfg.LLMBaseURL = val
 	case "llm.api_key":

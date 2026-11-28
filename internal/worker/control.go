@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/gitea"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/provider"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/store"
 )
 
@@ -42,17 +43,22 @@ func (p *Pool) runControlCommand(ctx context.Context, t gitea.ReviewTrigger, prK
 		out.Summary = fmt.Sprintf("dry-run: `/%s` would run on %s without side effects", t.Command, prKey)
 		return nil
 	}
-	if p.gitea == nil || p.store == nil {
-		return errors.New("control commands require a Gitea client and state store")
+	if p.forge == nil || p.store == nil {
+		return errors.New("control commands require a forge client and state store")
+	}
+	if t.Command == "resolve" {
+		if _, ok := p.forge.(provider.ReviewThreadResolver); !ok {
+			return p.refuseControl(ctx, t, startedAt, "review thread resolution is not supported by the configured forge")
+		}
 	}
 	if t.CommentID > 0 {
-		_ = p.gitea.AddCommentReaction(ctx, t.Owner, t.Repo, t.CommentID, "eyes")
+		_ = p.addCommentReaction(ctx, t, "eyes")
 	}
 
 	if t.CommentBy == "" {
 		return p.refuseControl(ctx, t, startedAt, "the commenter could not be identified")
 	}
-	ok, err := p.gitea.IsCollaborator(ctx, t.Owner, t.Repo, t.CommentBy)
+	ok, err := p.forge.IsCollaborator(ctx, t.Owner, t.Repo, t.CommentBy)
 	if err != nil || !ok {
 		return p.refuseControl(ctx, t, startedAt, fmt.Sprintf("`@%s` is not a repository collaborator", t.CommentBy))
 	}
@@ -72,7 +78,7 @@ func (p *Pool) runControlCommand(ctx context.Context, t gitea.ReviewTrigger, prK
 	}
 
 	out.Summary = msg
-	if err := p.gitea.PostComment(ctx, t.Owner, t.Repo, t.PRNumber, msg); err != nil {
+	if err := p.forge.PostComment(ctx, t.Owner, t.Repo, t.PRNumber, msg); err != nil {
 		p.finishWithError(prKey, t, startedAt, 0, 0, 0, err)
 		return err
 	}
@@ -91,7 +97,7 @@ func (p *Pool) runControlCommand(ctx context.Context, t gitea.ReviewTrigger, prK
 
 func (p *Pool) refuseControl(ctx context.Context, t gitea.ReviewTrigger, startedAt time.Time, reason string) error {
 	msg := fmt.Sprintf("Refusing `/%s`: %s.", t.Command, reason)
-	_ = p.gitea.PostComment(ctx, t.Owner, t.Repo, t.PRNumber, msg)
+	_ = p.forge.PostComment(ctx, t.Owner, t.Repo, t.PRNumber, msg)
 	p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 	return fmt.Errorf("unauthorized /%s command", t.Command)
 }
@@ -132,8 +138,12 @@ func isUserNamed(u gitea.User, name string) bool {
 
 // resolveBotThreads resolves every unresolved inline review comment authored by the bot on the PR.
 func (p *Pool) resolveBotThreads(ctx context.Context, t gitea.ReviewTrigger) (string, error) {
+	resolver, ok := p.forge.(provider.ReviewThreadResolver)
+	if !ok {
+		return "", errors.New("the configured forge does not support resolving review threads")
+	}
 	bot := p.botName()
-	reviews, err := p.gitea.ListPullReviews(ctx, t.Owner, t.Repo, t.PRNumber)
+	reviews, err := p.forge.ListPullReviews(ctx, t.Owner, t.Repo, t.PRNumber)
 	if err != nil {
 		return "", fmt.Errorf("list reviews: %w", err)
 	}
@@ -146,7 +156,7 @@ scan:
 		if !isUserNamed(rv.User, bot) {
 			continue
 		}
-		comments, err := p.gitea.ListPullReviewComments(ctx, t.Owner, t.Repo, t.PRNumber, rv.ID)
+		comments, err := resolver.ListPullReviewComments(ctx, t.Owner, t.Repo, t.PRNumber, rv.ID)
 		if err != nil {
 			failed++
 			lastErr = err
@@ -160,7 +170,7 @@ scan:
 				truncated = true
 				break scan
 			}
-			if err := p.gitea.ResolveReviewComment(ctx, t.Owner, t.Repo, c.ID); err != nil {
+			if err := resolver.ResolveReviewComment(ctx, t.Owner, t.Repo, c.ID); err != nil {
 				failed++
 				lastErr = err
 				if resolved == 0 && failed >= maxResolveEarlyFailure {
@@ -187,7 +197,7 @@ scan:
 		if len(detail) > 200 {
 			detail = detail[:200]
 		}
-		fmt.Fprintf(&b, "\n\n%d thread(s) could not be resolved. The Gitea server may not support the resolve API, or the bot lacks permission. Last error: `%s`", failed, detail)
+		fmt.Fprintf(&b, "\n\n%d thread(s) could not be resolved. The server may not support the resolve API, or the bot lacks permission. Last error: `%s`", failed, detail)
 	}
 	return b.String(), nil
 }

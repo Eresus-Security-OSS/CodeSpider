@@ -90,6 +90,66 @@ daemon:
 	}
 }
 
+func TestLoadGitHubProviderConfig(t *testing.T) {
+	content := `
+forge:
+  provider: github
+github:
+  api_url: "https://api.github.com"
+  token: "${CODESPIDER_GITHUB_TOKEN}"
+  webhook_secret: "github-hook-secret"
+  bot_username: codespider[bot]
+  repos:
+    - acme/api
+`
+	t.Setenv("CODESPIDER_GITHUB_TOKEN", "gh-token")
+	path := filepath.Join(t.TempDir(), "codespider.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ForgeProvider != "github" || cfg.GitHubToken != "gh-token" || cfg.GitHubWebhookSecret != "github-hook-secret" || cfg.GitHubBotUsername != "codespider[bot]" || len(cfg.GitHubRepos) != 1 || cfg.GitHubRepos[0] != "acme/api" {
+		t.Fatalf("unexpected GitHub config: %+v", cfg)
+	}
+}
+
+func TestGitHubAppConfig(t *testing.T) {
+	content := "forge:\n  provider: github\ngithub:\n  app_id: 1234\n  installation_id: 5678\n  app_private_key_path: /run/secrets/app.pem\n  webhook_secret: hook\n"
+	cfg := Default()
+	if err := parseYAML(content, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitHubAppID != 1234 || cfg.GitHubInstallationID != 5678 || cfg.GitHubAppPrivateKeyPath != "/run/secrets/app.pem" {
+		t.Fatalf("GitHub App settings not parsed: %+v", cfg)
+	}
+	cfg.GitHubInstallationID = 0
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must all be set together") {
+		t.Fatalf("expected incomplete App credentials to fail, got %v", err)
+	}
+	cfg.GitHubInstallationID = 5678
+	cfg.GitHubToken = "static-token"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "either github.token") {
+		t.Fatalf("expected mixed credential modes to fail, got %v", err)
+	}
+}
+
+func TestGitHubProviderRequiresSecureAPIURL(t *testing.T) {
+	cfg := Default()
+	cfg.ForgeProvider = "github"
+	cfg.GitHubToken = "token"
+	cfg.GitHubWebhookSecret = "secret"
+	cfg.GitHubBaseURL = "http://api.github.com"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "github.api_url must be an HTTPS URL") {
+		t.Fatalf("expected HTTPS URL validation error, got %v", err)
+	}
+}
+
 func TestResolvePathPrecedence(t *testing.T) {
 	t.Setenv("CODESPIDER_CONFIG_PATH", "/env/codespider.yaml")
 	if got := ResolvePath("/flag/codespider.yaml"); got != "/flag/codespider.yaml" {

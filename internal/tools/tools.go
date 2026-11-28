@@ -1,4 +1,4 @@
-// Package tools implements the read-only codebase and Gitea action tools available to the agent.
+// Package tools implements the read-only codebase and forge action tools available to the agent.
 package tools
 
 import (
@@ -18,6 +18,7 @@ import (
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/gitea"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/llm"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/policy"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/provider"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/sandbox"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
@@ -154,7 +155,7 @@ type Registry struct {
 	State       *ReviewState
 }
 
-// SetDeferSubmit controls whether submit_review defers the Gitea API call until FlushReview.
+// SetDeferSubmit controls whether submit_review defers the forge API call until FlushReview.
 func (r *Registry) SetDeferSubmit(deferIt bool) {
 	r.deferSubmit = deferIt
 }
@@ -165,6 +166,7 @@ type Params struct {
 	BaseWorktreeDir       string
 	Workspace             *workspace.Manager
 	Gitea                 *gitea.Client
+	Forge                 provider.ForgeProvider
 	Sandbox               *sandbox.Executor
 	Audit                 *audit.Logger
 	Permissions           *policy.PermissionSet
@@ -184,6 +186,9 @@ type Params struct {
 
 // NewRegistry builds the toolset for a PR review or comment-reply run.
 func NewRegistry(p Params) *Registry {
+	if p.Forge == nil && p.Gitea != nil {
+		p.Forge = &provider.GiteaAdapter{Client: p.Gitea}
+	}
 	reg := &Registry{
 		handlers: make(map[string]Handler),
 		params:   p,
@@ -329,10 +334,10 @@ func NewRegistry(p Params) *Registry {
 		"List existing conversation comments on this pull request.",
 		schema(map[string]any{}, nil),
 		func(ctx context.Context, raw string) (string, error) {
-			if p.Gitea == nil {
+			if p.Forge == nil {
 				return "[]", nil
 			}
-			comments, err := p.Gitea.ListPRComments(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber)
+			comments, err := p.Forge.ListPRComments(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber)
 			if err != nil {
 				return "", err
 			}
@@ -345,10 +350,10 @@ func NewRegistry(p Params) *Registry {
 		"List existing formal PR reviews on this pull request.",
 		schema(map[string]any{}, nil),
 		func(ctx context.Context, raw string) (string, error) {
-			if p.Gitea == nil {
+			if p.Forge == nil {
 				return "[]", nil
 			}
-			reviews, err := p.Gitea.ListPullReviews(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber)
+			reviews, err := p.Forge.ListPullReviews(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber)
 			if err != nil {
 				return "", err
 			}
@@ -365,7 +370,7 @@ func NewRegistry(p Params) *Registry {
 			"start_line": prop("integer", "Optional 1-based start line for multi-line suggestions"),
 			"severity":   prop("string", "info, warning, or critical"),
 			"body":       prop("string", "Concise, actionable review comment"),
-			"suggestion": prop("string", "Optional replacement code for the target line(s), rendered as a 1-click Gitea suggestion block without markdown fences"),
+			"suggestion": prop("string", "Optional replacement code for the target line(s), rendered as an inline suggestion block without markdown fences"),
 		}, []string{"path", "line", "body"}),
 		func(ctx context.Context, raw string) (string, error) {
 			var args struct {
@@ -397,7 +402,7 @@ func NewRegistry(p Params) *Registry {
 			}
 
 			// Diff hunk gate: if the diff has explicit hunks and line is outside them,
-			// move the finding into summary notes rather than failing Gitea review creation.
+			// move the finding into summary notes rather than failing forge review creation.
 			if len(validLines) > 0 && !isLineInDiff(validLines, args.Path, args.Line) {
 				reg.State.mu.Lock()
 				if strings.EqualFold(strings.TrimSpace(args.Severity), "critical") {
@@ -447,7 +452,7 @@ func NewRegistry(p Params) *Registry {
 	)
 
 	reg.register("submit_review",
-		"Submit the final PR review (summary + all staged inline comments) to Gitea.",
+		"Submit the final PR review (summary + all staged inline comments) to the configured forge.",
 		schema(map[string]any{
 			"verdict": prop("string", "COMMENT, APPROVE, or REQUEST_CHANGES"),
 			"summary": prop("string", "Markdown summary of the PR review"),
@@ -498,7 +503,7 @@ func NewRegistry(p Params) *Registry {
 			if strings.TrimSpace(args.Body) == "" {
 				return "", fmt.Errorf("body is required")
 			}
-			if !p.DryRun && p.Gitea != nil {
+			if !p.DryRun && p.Forge != nil {
 				if p.Permissions != nil {
 					if err := policy.CheckSideEffectAllowed(policy.EffectPostComment, *p.Permissions); err != nil {
 						return "", err
@@ -509,7 +514,7 @@ func NewRegistry(p Params) *Registry {
 						return "", err
 					}
 				}
-				if err := p.Gitea.PostComment(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber, args.Body); err != nil {
+				if err := p.Forge.PostComment(ctx, p.Trigger.Owner, p.Trigger.Repo, p.Trigger.PRNumber, args.Body); err != nil {
 					return "", err
 				}
 			}
@@ -604,7 +609,7 @@ func absInt64(v int64) int64 {
 	return v
 }
 
-// FlushReview sends a staged PR review to Gitea if it has not been flushed yet and DryRun is false.
+// FlushReview sends a staged PR review to the configured forge if it has not been flushed yet and DryRun is false.
 // It consolidates deterministic findings and verifies the remote PR head SHA before publication.
 func (r *Registry) FlushReview(ctx context.Context) error {
 	r.ConsolidateFindings(r.params.DeterministicFindings, r.params.MinSeverity)
@@ -625,7 +630,7 @@ func (r *Registry) FlushReview(ctx context.Context) error {
 	comments := append([]gitea.ReviewComment(nil), r.State.InlineComments...)
 	r.State.mu.Unlock()
 
-	if !r.params.DryRun && r.params.Gitea != nil {
+	if !r.params.DryRun && r.params.Forge != nil {
 		if r.params.Permissions != nil {
 			if err := policy.CheckSideEffectAllowed(policy.EffectPostReview, *r.params.Permissions); err != nil {
 				return err
@@ -636,7 +641,7 @@ func (r *Registry) FlushReview(ctx context.Context) error {
 				return err
 			}
 		}
-		err := r.params.Gitea.CreateReview(ctx, r.params.Trigger.Owner, r.params.Trigger.Repo, r.params.Trigger.PRNumber, gitea.CreateReviewRequest{
+		err := r.params.Forge.SubmitReview(ctx, r.params.Trigger.Owner, r.params.Trigger.Repo, r.params.Trigger.PRNumber, gitea.CreateReviewRequest{
 			CommitID: r.params.Trigger.HeadSHA,
 			Body:     summary,
 			Event:    verdict,
@@ -716,7 +721,7 @@ func (r *Registry) registerWriteTools(p Params) {
 	)
 
 	r.register("commit_and_push",
-		"Stage all changes in the PR worktree, commit them, and push to the PR head branch on Gitea.",
+		"Stage all changes in the PR worktree, commit them, and push to the configured forge's PR head branch.",
 		schema(map[string]any{
 			"message": prop("string", "Git commit message"),
 		}, []string{"message"}),

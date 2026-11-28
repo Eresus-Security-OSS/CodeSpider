@@ -30,10 +30,10 @@ func stageNames(stages []StageMetric) []string {
 }
 
 func (p *Pool) verifyHeadUnchanged(ctx context.Context, t gitea.ReviewTrigger) error {
-	if t.DryRun || t.HeadSHA == "" || p.gitea == nil || t.Kind != "pr_review" {
+	if t.DryRun || t.HeadSHA == "" || p.forge == nil || t.Kind != "pr_review" {
 		return nil
 	}
-	curPR, err := p.gitea.GetPullRequest(ctx, t.Owner, t.Repo, t.PRNumber)
+	curPR, err := p.forge.GetPullRequest(ctx, t.Owner, t.Repo, t.PRNumber)
 	if err != nil {
 		return nil // transient lookup error does not block if SHA was not observed to move
 	}

@@ -31,7 +31,7 @@ func (p *Pool) runPostReviewAutomations(
 	res agent.RunResult,
 	secretFindings []security.Finding,
 ) {
-	if p.gitea == nil {
+	if p.forge == nil {
 		return
 	}
 
@@ -43,14 +43,14 @@ func (p *Pool) runPostReviewAutomations(
 	if stickySummary && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
 		checks := repoCfg.EvaluatePreMergeChecks(t.PRTitle, t.PRBody, countDiffLines(diff))
 		body := buildStickyWalkthrough(t, diff, res, secretFindings, checks)
-		if err := p.gitea.UpsertStickyComment(ctx, t.Owner, t.Repo, t.PRNumber, stickySummaryMarker, body); err != nil {
+		if err := p.forge.UpsertStickyComment(ctx, t.Owner, t.Repo, t.PRNumber, stickySummaryMarker, body); err != nil {
 			p.logger.Warn("failed to upsert sticky summary comment", "pr", t.PRNumber, "err", err)
 		}
 	}
 
 	if repoCfg.AutoLabel && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectMutateLabelsOrReviewer, perms) == nil {
 		labels := computePRLabels(diff, res.HasCritical, secretFindings)
-		if err := p.gitea.EnsureAndAddLabels(ctx, t.Owner, t.Repo, t.PRNumber, labels); err != nil {
+		if err := p.forge.EnsureAndAddLabels(ctx, t.Owner, t.Repo, t.PRNumber, labels); err != nil {
 			p.logger.Warn("failed to apply auto labels", "pr", t.PRNumber, "err", err)
 		}
 	}
@@ -66,7 +66,7 @@ func (p *Pool) runPostReviewAutomations(
 		changed := repoconfig.ExtractChangedPaths(diff)
 		reviewers := repoconfig.MatchCodeOwners(rules, changed, prAuthor, p.authorName)
 		if len(reviewers) > 0 {
-			if err := p.gitea.RequestReviewers(ctx, t.Owner, t.Repo, t.PRNumber, reviewers); err != nil {
+			if err := p.forge.RequestReviewers(ctx, t.Owner, t.Repo, t.PRNumber, reviewers); err != nil {
 				p.logger.Warn("failed to assign CODEOWNERS reviewers", "pr", t.PRNumber, "err", err)
 			}
 		}

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,7 +81,7 @@ func TestResolveSafePath(t *testing.T) {
 
 func TestGitAuthArgsAndRedaction(t *testing.T) {
 	token := "super-secret-gitea-token"
-	args := gitAuthArgs("https://gitea.example.com/acme/api.git", token)
+	args := gitAuthArgs("https://gitea.example.com/acme/api.git", token, "")
 	if len(args) != 2 || args[0] != "-c" || !strings.HasPrefix(args[1], "http.extraHeader=Authorization: Basic ") {
 		t.Fatalf("unexpected gitAuthArgs: %#v", args)
 	}
@@ -88,7 +89,7 @@ func TestGitAuthArgsAndRedaction(t *testing.T) {
 		t.Fatal("expected Basic auth header to encode token rather than embed raw token")
 	}
 
-	if got := gitAuthArgs("ssh://git@gitea.example.com/acme/api.git", token); got != nil {
+	if got := gitAuthArgs("ssh://git@gitea.example.com/acme/api.git", token, ""); got != nil {
 		t.Fatalf("expected nil auth args for ssh URL, got %#v", got)
 	}
 
@@ -103,6 +104,21 @@ func TestGitAuthArgsAndRedaction(t *testing.T) {
 	redacted := mgr.redact("error using " + token)
 	if strings.Contains(redacted, token) || !strings.Contains(redacted, "[REDACTED]") {
 		t.Fatalf("expected token to be redacted, got: %q", redacted)
+	}
+}
+
+func TestGitAuthArgsSupportsGitHubAppUsername(t *testing.T) {
+	args := gitAuthArgs("https://github.com/acme/api.git", "app-token", "x-access-token")
+	if len(args) != 2 || !strings.Contains(args[1], "Authorization: Basic ") {
+		t.Fatalf("unexpected git auth args: %#v", args)
+	}
+	encoded := strings.TrimPrefix(args[1], "http.extraHeader=Authorization: Basic ")
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != "x-access-token:app-token" {
+		t.Fatalf("decoded credentials=%q", decoded)
 	}
 }
 
@@ -176,6 +192,52 @@ func TestCheckoutDiffCommitAndCleanup(t *testing.T) {
 	mgr.CleanupStaleWorktrees(ctx)
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("expected stale worktree dir %s to be cleaned up", stale)
+	}
+}
+
+func TestCheckoutPRWithRemoteRef(t *testing.T) {
+	ctx := context.Background()
+	origin := t.TempDir()
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Tester", "GIT_AUTHOR_EMAIL=tester@example.com", "GIT_COMMITTER_NAME=Tester", "GIT_COMMITTER_EMAIL=tester@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(origin, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(origin, "main.txt"), []byte("main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(origin, "add", ".")
+	run(origin, "commit", "-m", "main")
+	run(origin, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(origin, "feature.txt"), []byte("PR head\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(origin, "add", ".")
+	run(origin, "commit", "-m", "PR head")
+	sha := run(origin, "rev-parse", "HEAD")
+	run(origin, "update-ref", "refs/pull/7/head", sha)
+
+	mgr := NewManager(t.TempDir(), "")
+	worktree, cleanup, err := mgr.CheckoutPRWithRef(ctx, "acme", "app", origin, sha, "refs/pull/7/head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if got := run(worktree, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("checked out %s, want %s", got, sha)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "feature.txt")); err != nil {
+		t.Fatalf("PR file missing: %v", err)
+	}
+	if _, _, err := mgr.CheckoutPRWithRef(ctx, "acme", "app", origin, sha, "refs/pull/7/head:refs/heads/oops"); err == nil {
+		t.Fatal("expected noncanonical remote ref rejection")
 	}
 }
 
