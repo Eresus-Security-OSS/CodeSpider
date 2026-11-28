@@ -106,3 +106,23 @@ func TestClientEndpoints(t *testing.T) {
 		t.Fatalf("expected 15 HTTP calls, got %d", hits.Load())
 	}
 }
+
+func TestUpsertStickyCommentReturnsListErrorWithoutDuplicatePost(t *testing.T) {
+	var postHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postHits.Add(1)
+		}
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "test-tok")
+	err := c.UpsertStickyComment(context.Background(), "acme", "api", 1, "<!-- marker -->", "body")
+	if err == nil {
+		t.Fatal("expected error when listing PR comments fails")
+	}
+	if postHits.Load() != 0 {
+		t.Fatalf("expected no duplicate POST comment on list failure, got %d", postHits.Load())
+	}
+}

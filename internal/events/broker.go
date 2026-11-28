@@ -32,6 +32,7 @@ func NewBroker(historyLimit int) *Broker {
 	}
 	return &Broker{
 		historyLimit: historyLimit,
+		history:      make([]Event, 0, historyLimit),
 		subscribers:  make(map[chan Event]struct{}),
 	}
 }
@@ -60,9 +61,11 @@ func (b *Broker) Publish(ev Event) {
 	if b.redactor != nil {
 		ev.Message = b.redactor(ev.Message)
 	}
-	b.history = append(b.history, ev)
-	if len(b.history) > b.historyLimit {
-		b.history = b.history[len(b.history)-b.historyLimit:]
+	if len(b.history) < b.historyLimit {
+		b.history = append(b.history, ev)
+	} else {
+		copy(b.history, b.history[1:])
+		b.history[len(b.history)-1] = ev
 	}
 	for ch := range b.subscribers {
 		select {

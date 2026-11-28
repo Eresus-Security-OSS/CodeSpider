@@ -145,6 +145,17 @@ func TestSessionCookieAdminAuthAndMemoryAPI(t *testing.T) {
 		t.Fatalf("expected 403 when CSRF token missing on cookie POST, got %d", rec.Code)
 	}
 
+	// Cookie-authenticated POST with malformed Origin must fail closed with 403
+	badOriginReq := httptest.NewRequest(http.MethodPost, "/api/memory", strings.NewReader(`{"kind":"rule","rule":{"id":"r2","instruction":"y"}}`))
+	badOriginReq.AddCookie(cookie)
+	badOriginReq.Header.Set("X-CSRF-Token", sessionResp.CSRFToken)
+	badOriginReq.Header.Set("Origin", "://malformed-origin")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, badOriginReq)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when Origin header is malformed, got %d", rec.Code)
+	}
+
 	// Cookie-authenticated POST with valid X-CSRF-Token succeeds
 	csrfOKReq := httptest.NewRequest(http.MethodPost, "/api/memory", strings.NewReader(`{"kind":"rule","rule":{"id":"r1","instruction":"x"}}`))
 	csrfOKReq.AddCookie(cookie)

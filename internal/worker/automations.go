@@ -35,7 +35,12 @@ func (p *Pool) runPostReviewAutomations(
 		return
 	}
 
-	if p.stickySummary && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
+	p.mu.Lock()
+	stickySummary := p.stickySummary
+	alertWebhookURL := p.alertWebhookURL
+	p.mu.Unlock()
+
+	if stickySummary && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
 		body := buildStickyWalkthrough(t, diff, res, secretFindings)
 		if err := p.gitea.UpsertStickyComment(ctx, t.Owner, t.Repo, t.PRNumber, stickySummaryMarker, body); err != nil {
 			p.logger.Warn("failed to upsert sticky summary comment", "pr", t.PRNumber, "err", err)
@@ -60,11 +65,11 @@ func (p *Pool) runPostReviewAutomations(
 		}
 	}
 
-	if p.alertWebhookURL != "" && (res.HasCritical || len(secretFindings) > 0) && policy.CheckSideEffectAllowed(policy.EffectSendAlert, perms) == nil {
+	if alertWebhookURL != "" && (res.HasCritical || len(secretFindings) > 0) && policy.CheckSideEffectAllowed(policy.EffectSendAlert, perms) == nil {
 		prKey := store.PRKey(t.Owner, t.Repo, t.PRNumber)
 		msg := fmt.Sprintf("[CodeSpider Alert] %s (commit %s): critical=%v, secret_findings=%d, inline_comments=%d",
 			prKey, shortSHA(t.HeadSHA), res.HasCritical, len(secretFindings), res.InlineComments)
-		if err := sendAlertWebhook(ctx, p.alertWebhookURL, msg, prKey, t.HeadSHA); err != nil {
+		if err := sendAlertWebhook(ctx, alertWebhookURL, msg, prKey, t.HeadSHA); err != nil {
 			p.logger.Warn("failed to send alert webhook", "pr", prKey, "err", err)
 		}
 	}

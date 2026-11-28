@@ -102,11 +102,12 @@ func (c *Client) UpsertStickyComment(ctx context.Context, owner, repo string, pr
 		body = marker + "\n" + body
 	}
 	comments, err := c.ListPRComments(ctx, owner, repo, prNumber)
-	if err == nil {
-		for _, cm := range comments {
-			if strings.Contains(cm.Body, marker) {
-				return c.EditComment(ctx, owner, repo, cm.ID, body)
-			}
+	if err != nil {
+		return fmt.Errorf("list PR comments before sticky upsert: %w", err)
+	}
+	for _, cm := range comments {
+		if strings.Contains(cm.Body, marker) {
+			return c.EditComment(ctx, owner, repo, cm.ID, body)
 		}
 	}
 	return c.PostComment(ctx, owner, repo, prNumber, body)

@@ -105,9 +105,15 @@ func (s *Store) RecordRun(rec RunRecord) error {
 	if rec.Status == "success" && rec.Kind == "pr_review" && rec.HeadSHA != "" {
 		s.state.ReviewedSHAs[rec.PRKey] = rec.HeadSHA
 	}
-	s.state.RecentRuns = append(s.state.RecentRuns, rec)
-	if len(s.state.RecentRuns) > 100 {
-		s.state.RecentRuns = s.state.RecentRuns[len(s.state.RecentRuns)-100:]
+	const maxRecentRuns = 100
+	if len(s.state.RecentRuns) < maxRecentRuns {
+		s.state.RecentRuns = append(s.state.RecentRuns, rec)
+	} else {
+		keep := s.state.RecentRuns[len(s.state.RecentRuns)-(maxRecentRuns-1):]
+		copy(s.state.RecentRuns, keep)
+		clear(s.state.RecentRuns[maxRecentRuns:])
+		s.state.RecentRuns = s.state.RecentRuns[:maxRecentRuns]
+		s.state.RecentRuns[maxRecentRuns-1] = rec
 	}
 	return s.saveLocked()
 }
@@ -163,7 +169,7 @@ func (s *Store) saveLocked() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)
