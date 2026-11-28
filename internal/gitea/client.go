@@ -187,6 +187,34 @@ func (c *Client) EnsureAndAddLabels(ctx context.Context, owner, repo string, prN
 	return c.doJSON(ctx, http.MethodPost, attachPath, map[string][]int64{"labels": ids}, nil)
 }
 
+// RemoveLabelsWithPrefix detaches every label on the PR whose name starts with prefix, except the
+// names in keep. CodeSpider uses it to drop an outdated "size/*" label when the PR size changes.
+func (c *Client) RemoveLabelsWithPrefix(ctx context.Context, owner, repo string, prNumber int64, prefix string, keep []string) error {
+	if prefix == "" {
+		return fmt.Errorf("label prefix is required")
+	}
+	keepSet := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		keepSet[strings.ToLower(strings.TrimSpace(k))] = true
+	}
+	listPath := fmt.Sprintf("/api/v1/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(repo), prNumber)
+	var current []Label
+	if err := c.doJSON(ctx, http.MethodGet, listPath, nil, &current); err != nil {
+		return err
+	}
+	var firstErr error
+	for _, lbl := range current {
+		lower := strings.ToLower(lbl.Name)
+		if !strings.HasPrefix(lower, strings.ToLower(prefix)) || keepSet[lower] {
+			continue
+		}
+		if err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("%s/%d", listPath, lbl.ID), nil, nil); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func labelColor(name string) string {
 	switch {
 	case strings.EqualFold(name, "security"):

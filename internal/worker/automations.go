@@ -15,6 +15,7 @@ import (
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/agent"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/gitea"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/policy"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/provider"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/repoconfig"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/security"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/store"
@@ -52,6 +53,11 @@ func (p *Pool) runPostReviewAutomations(
 		labels := computePRLabels(diff, res.HasCritical, secretFindings)
 		if err := p.forge.EnsureAndAddLabels(ctx, t.Owner, t.Repo, t.PRNumber, labels); err != nil {
 			p.logger.Warn("failed to apply auto labels", "pr", t.PRNumber, "err", err)
+		} else if r, ok := p.forge.(provider.LabelPrefixReplacer); ok {
+			// The size bucket changes as a PR grows or shrinks; keep only the current one.
+			if err := r.RemoveLabelsWithPrefix(ctx, t.Owner, t.Repo, t.PRNumber, "size/", labels); err != nil {
+				p.logger.Warn("failed to remove stale size labels", "pr", t.PRNumber, "err", err)
+			}
 		}
 	}
 

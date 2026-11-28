@@ -110,6 +110,8 @@ review:
 
 The sticky summary comment (`forge.sticky_summary`) also lists a collapsible per-file `+/-` table and a heuristic 1-5 review-effort estimate derived from diff size.
 
+With `auto_label: true`, CodeSpider attaches `size/XS`, `size/S`, `size/M`, `size/L` or `size/XL` from the diff size, plus `security` and `tests` when they apply. When the size bucket changes on a later review, the previous `size/*` label is removed so a PR carries one size label. Other labels, including `security`, are never removed automatically.
+
 Automatic-review gating and pre-merge checks:
 
 - `base_branches` limits automatic reviews to PRs targeting a matching branch (`path.Match` globs, so `release/*` matches `release/1.2` but not `release/1.2/hotfix`). `ignore_title_keywords` skips PRs whose title contains a keyword (case-insensitive). A skipped PR gets a `success` commit status that names the reason. `/review` and `/redteam` always run.
