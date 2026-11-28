@@ -65,4 +65,5 @@ daemon:
   data_dir: "./data"
   workers: 2
   reconcile_interval_seconds: 300
+  # update_check_hours: 24  # opt in to periodic release checks (outbound call to api.github.com); 0 = off
   log_level: "info"

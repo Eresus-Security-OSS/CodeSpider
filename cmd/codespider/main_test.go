@@ -38,7 +38,7 @@ func TestHTTPEndpoints(t *testing.T) {
 	pool := worker.NewPool(worker.Config{Workers: 1, Store: st, Metrics: mc, Events: broker, Memory: mem})
 	auditLog := audit.NewLogger(t.TempDir())
 	og, _ := orggraph.Open("")
-	handler := buildHTTPHandler(cfg, pool, st, mc, broker, mem, auditLog, og)
+	handler := buildHTTPHandler(cfg, pool, st, mc, broker, mem, auditLog, og, nil)
 
 	// /healthz
 	rec := httptest.NewRecorder()
@@ -103,7 +103,7 @@ func TestSessionCookieAdminAuthAndMemoryAPI(t *testing.T) {
 	}
 	mc := metrics.NewCollector()
 	pool := worker.NewPool(worker.Config{Workers: 1, Store: st, Metrics: mc, Memory: mem})
-	handler := buildHTTPHandler(cfg, pool, st, mc, events.NewBroker(10), mem, audit.NewLogger(t.TempDir()), nil)
+	handler := buildHTTPHandler(cfg, pool, st, mc, events.NewBroker(10), mem, audit.NewLogger(t.TempDir()), nil, nil)
 
 	// /status requires admin token (query string ?token= must NOT work)
 	rec := httptest.NewRecorder()
