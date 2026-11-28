@@ -28,8 +28,10 @@ type ReviewTrigger struct {
 	BaseRef            string
 	HeadRef            string
 	HeadSHA            string
+	HeadRemoteRef      string
 	PreviousSHA        string
 	CommentID          int64
+	CommentIsReview    bool
 	CommentBy          string
 	Instruction        string
 	ReviewPath         string
@@ -238,24 +240,25 @@ func (h *WebhookHandler) parseEvent(eventType string, payload []byte) (ReviewTri
 			reviewLine = ev.Comment.Line
 		}
 		return ReviewTrigger{
-			Kind:           kind,
-			Command:        command,
-			IsFork:         detectForkPR(ev.PullRequest, ev.Repository),
-			Owner:          owner,
-			Repo:           repo,
-			CloneURL:       ev.Repository.CloneURL,
-			PRNumber:       ev.PullRequest.Number,
-			PRTitle:        ev.PullRequest.Title,
-			PRBody:         ev.PullRequest.Body,
-			BaseRef:        ev.PullRequest.Base.Ref,
-			HeadRef:        ev.PullRequest.Head.Ref,
-			HeadSHA:        ev.PullRequest.Head.SHA,
-			CommentID:      ev.Comment.ID,
-			CommentBy:      sender,
-			Instruction:    instruction,
-			ReviewPath:     ev.Comment.Path,
-			ReviewLine:     reviewLine,
-			ReviewDiffHunk: ev.Comment.DiffHunk,
+			Kind:            kind,
+			Command:         command,
+			IsFork:          detectForkPR(ev.PullRequest, ev.Repository),
+			Owner:           owner,
+			Repo:            repo,
+			CloneURL:        ev.Repository.CloneURL,
+			PRNumber:        ev.PullRequest.Number,
+			PRTitle:         ev.PullRequest.Title,
+			PRBody:          ev.PullRequest.Body,
+			BaseRef:         ev.PullRequest.Base.Ref,
+			HeadRef:         ev.PullRequest.Head.Ref,
+			HeadSHA:         ev.PullRequest.Head.SHA,
+			CommentID:       ev.Comment.ID,
+			CommentIsReview: true,
+			CommentBy:       sender,
+			Instruction:     instruction,
+			ReviewPath:      ev.Comment.Path,
+			ReviewLine:      reviewLine,
+			ReviewDiffHunk:  ev.Comment.DiffHunk,
 		}, true, nil
 
 	default:
