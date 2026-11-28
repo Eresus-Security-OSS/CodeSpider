@@ -300,6 +300,14 @@ func ParseBotCommand(body, botUsername string) (kind, command, instruction strin
 		return "comment_reply", "ci", rest
 	case "/redteam", "redteam":
 		return "pr_review", "redteam", rest
+	// State-changing commands require the explicit slash form so a question that merely
+	// starts with the word "resume" or "resolve" cannot trigger them.
+	case "/pause":
+		return "comment_reply", "pause", ""
+	case "/resume":
+		return "comment_reply", "resume", ""
+	case "/resolve":
+		return "comment_reply", "resolve", ""
 	case "/help", "help":
 		return "comment_reply", "help", ""
 	default:
