@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,9 +27,48 @@ func TestRunLabDifferentialFlakeCompileAndPatch(t *testing.T) {
 	binDir := t.TempDir()
 	stateFile := filepath.Join(binDir, "mode.txt")
 	mockDocker := filepath.Join(binDir, "docker")
-
-	// Mock container runtime script inspecting mounted host workspace marker and simulating base pass / head fail / patch pass.
-	script := `#!/bin/sh
+	var script string
+	if runtime.GOOS == "windows" {
+		mockDocker += ".cmd"
+		script = `@echo off
+setlocal enabledelayedexpansion
+set "args=%*"
+echo !args! | findstr /C:":ro" >nul || (
+  echo missing read-only mount 1>&2
+  exit /b 2
+)
+set "ws="
+:loop
+if "%~1"=="" goto done
+if "%~1"=="-v" (
+  set "vol=%~2"
+  set "ws=!vol::/workspace-ro:ro=!"
+  shift
+)
+shift
+goto loop
+:done
+set "mode=normal"
+if exist "` + stateFile + `" set /p mode=<"` + stateFile + `"
+if "!mode!"=="compile_error" (
+  echo FAIL example/pkg [build failed]
+  exit /b 2
+)
+if exist "!ws!\patched.txt" (
+  echo PASS
+  exit /b 0
+)
+if exist "!ws!\head.txt" (
+  echo --- FAIL: TestBug (0.00s^)
+  echo panic: nil pointer dereference
+  exit /b 1
+)
+echo PASS
+exit /b 0
+`
+	} else {
+		// Mock container runtime script inspecting mounted host workspace marker and simulating base pass / head fail / patch pass.
+		script = `#!/bin/sh
 args="$*"
 if ! echo "$args" | grep -q ":ro"; then
   echo "missing read-only mount" >&2
@@ -52,6 +92,7 @@ fi
 echo "PASS"
 exit 0
 `
+	}
 	if err := os.WriteFile(mockDocker, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
