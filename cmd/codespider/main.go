@@ -480,18 +480,25 @@ func serveSSE(w http.ResponseWriter, r *http.Request, broker *events.Broker) {
 		return
 	}
 
-	for _, ev := range broker.Recent() {
+	once := r.URL.Query().Get("once") == "1"
+	var history []events.Event
+	var ch <-chan events.Event
+	if once {
+		history = broker.Recent()
+	} else {
+		history, ch = broker.Subscribe(r.Context())
+	}
+	for _, ev := range history {
 		if b, err := json.Marshal(ev); err == nil {
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
 		}
 	}
 	flusher.Flush()
 
-	if r.URL.Query().Get("once") == "1" {
+	if once {
 		return
 	}
 
-	ch := broker.Subscribe(r.Context())
 	for {
 		select {
 		case <-r.Context().Done():

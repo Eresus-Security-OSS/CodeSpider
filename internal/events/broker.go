@@ -81,20 +81,19 @@ func (b *Broker) Recent() []Event {
 	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	out := make([]Event, len(b.history))
-	copy(out, b.history)
-	return out
+	return append([]Event{}, b.history...)
 }
 
-// Subscribe returns a channel that receives published events until ctx is canceled.
-func (b *Broker) Subscribe(ctx context.Context) <-chan Event {
+// Subscribe returns a history snapshot and a channel for subsequent events until ctx is canceled.
+func (b *Broker) Subscribe(ctx context.Context) ([]Event, <-chan Event) {
 	ch := make(chan Event, 32)
 	if b == nil {
 		close(ch)
-		return ch
+		return nil, ch
 	}
 
 	b.mu.Lock()
+	history := append([]Event{}, b.history...)
 	b.subscribers[ch] = struct{}{}
 	b.mu.Unlock()
 
@@ -105,5 +104,5 @@ func (b *Broker) Subscribe(ctx context.Context) <-chan Event {
 		close(ch)
 		b.mu.Unlock()
 	}()
-	return ch
+	return history, ch
 }
