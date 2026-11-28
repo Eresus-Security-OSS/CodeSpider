@@ -71,9 +71,8 @@ func (c *Collector) RecordWebhook(eventType, outcome string) {
 	if c == nil {
 		return
 	}
-	if eventType == "" {
-		eventType = "unknown"
-	}
+	eventType = normalizeWebhookEvent(eventType)
+	outcome = normalizeWebhookOutcome(outcome)
 	switch outcome {
 	case "accepted":
 		c.webhooksAccepted.Add(1)
@@ -88,6 +87,37 @@ func (c *Collector) RecordWebhook(eventType, outcome string) {
 	c.mu.Lock()
 	c.webhookByLabel[key]++
 	c.mu.Unlock()
+}
+
+func normalizeWebhookEvent(eventType string) string {
+	switch eventType {
+	case "":
+		return "unknown"
+	case "pull_request",
+		"issue_comment",
+		"pull_request_comment",
+		"pull_request_review_comment",
+		"pull_request_review",
+		"push",
+		"ping",
+		"issues",
+		"create",
+		"delete",
+		"release",
+		"status":
+		return eventType
+	default:
+		return "other"
+	}
+}
+
+func normalizeWebhookOutcome(outcome string) string {
+	switch outcome {
+	case "accepted", "ignored", "rejected", "error":
+		return outcome
+	default:
+		return "other"
+	}
 }
 
 // RecordRun records the outcome and resource consumption of a review/reply run.

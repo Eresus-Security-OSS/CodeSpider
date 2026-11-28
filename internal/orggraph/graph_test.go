@@ -122,4 +122,11 @@ func TestSpeculativeMergeCheckDetectsConflict(t *testing.T) {
 	if !res.HasConflict {
 		t.Fatalf("expected merge conflict between PR A and PR B, got %+v", res)
 	}
+
+	if _, err := SpeculativeMergeCheck(ctx, ws, "acme", "app", origin, shaA, "--strategy-option=ours"); err == nil {
+		t.Fatal("expected flag-like prBSHA to be rejected")
+	}
+	if _, err := SpeculativeMergeCheck(ctx, ws, "acme", "app", origin, "-bad", shaB); err == nil {
+		t.Fatal("expected flag-like prASHA to be rejected")
+	}
 }

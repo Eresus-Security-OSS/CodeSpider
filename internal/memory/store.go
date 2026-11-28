@@ -196,6 +196,7 @@ func (s *Store) Delete(authorized bool, key string) (bool, error) {
 		}
 		filtered = append(filtered, inc)
 	}
+	clear(s.state.Incidents[len(filtered):])
 	s.state.Incidents = filtered
 	if removed {
 		if err := s.saveLocked(); err != nil {
