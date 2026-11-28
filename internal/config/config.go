@@ -52,6 +52,7 @@ type Config struct {
 	DataDir                   string
 	Workers                   int
 	ReconcileInterval         time.Duration
+	UpdateCheckInterval       time.Duration // 0 disables the outbound release check
 	LogLevel                  string
 }
 
@@ -149,6 +150,9 @@ func (c Config) Validate() error {
 	}
 	if c.AgentMaxSteps < 1 {
 		errs = append(errs, fmt.Errorf("agent.max_steps must be >= 1, got %d", c.AgentMaxSteps))
+	}
+	if c.UpdateCheckInterval < 0 {
+		errs = append(errs, fmt.Errorf("daemon.update_check_hours must be >= 0, got %s", c.UpdateCheckInterval))
 	}
 	return errors.Join(errs...)
 }
@@ -405,6 +409,15 @@ func applyField(fullKey, rawVal string, cfg *Config) error {
 			return err
 		}
 		cfg.ReconcileInterval = time.Duration(n) * time.Second
+	case "daemon.update_check_hours":
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return err
+		}
+		if n < 0 || n > 24*365 {
+			return fmt.Errorf("daemon.update_check_hours must be between 0 and %d", 24*365)
+		}
+		cfg.UpdateCheckInterval = time.Duration(n) * time.Hour
 	case "daemon.log_level", "log_level":
 		cfg.LogLevel = val
 	}

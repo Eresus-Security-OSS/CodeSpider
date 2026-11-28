@@ -40,6 +40,7 @@ import (
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/security"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/skills"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/store"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/update"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/worker"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
@@ -55,6 +56,10 @@ func main() {
 			os.Exit(runBenchCLI(os.Args[2:]))
 		case "healthcheck":
 			os.Exit(runHealthcheckCLI(os.Args[2:]))
+		case "version", "--version", "-version":
+			os.Exit(runVersionCLI(os.Stdout))
+		case "update":
+			os.Exit(runUpdateCLI(os.Args[2:], os.Stdout, nil))
 		}
 	}
 
@@ -164,6 +169,17 @@ func main() {
 	pool.Start(ctx)
 	pool.StartReconciler(ctx, cfg.ReconcileInterval, cfg.GiteaRepos)
 
+	// The release check is an outbound call to api.github.com, so it only runs when explicitly enabled.
+	var updateMonitor *update.Monitor
+	if cfg.UpdateCheckInterval > 0 {
+		updateMonitor = update.NewMonitor(nil, buildVersion())
+		go updateMonitor.Run(ctx, cfg.UpdateCheckInterval,
+			func(s update.Status) {
+				logger.Info("a newer CodeSpider release is available", "current", s.Current, "latest", s.Latest)
+			},
+			func(err error) { logger.Warn("update check failed", "err", err) })
+	}
+
 	// SIGHUP hot-reloads skills, budgets, routing, and runtime flags atomically without dropping active PR jobs.
 	sighupCh := make(chan os.Signal, 1)
 	signal.Notify(sighupCh, syscall.SIGHUP)
@@ -200,7 +216,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           buildHTTPHandler(cfg, pool, st, metricsCollector, eventBroker, memStore, auditLog, orgGraph),
+		Handler:           buildHTTPHandler(cfg, pool, st, metricsCollector, eventBroker, memStore, auditLog, orgGraph, updateMonitor),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -222,7 +238,7 @@ func main() {
 	logger.Info("CodeSpider stopped cleanly")
 }
 
-func buildHTTPHandler(cfg config.Config, pool *worker.Pool, st *store.Store, mc *metrics.Collector, broker *events.Broker, mem *memory.Store, auditLog *audit.Logger, orgGraph *orggraph.Graph) http.Handler {
+func buildHTTPHandler(cfg config.Config, pool *worker.Pool, st *store.Store, mc *metrics.Collector, broker *events.Broker, mem *memory.Store, auditLog *audit.Logger, orgGraph *orggraph.Graph, updates *update.Monitor) http.Handler {
 	mux := http.NewServeMux()
 	registerOperationsAPI(mux, cfg.AdminToken, apiDeps{
 		pool:      pool,
@@ -264,7 +280,8 @@ func buildHTTPHandler(cfg config.Config, pool *worker.Pool, st *store.Store, mc 
 		if st != nil {
 			recent = st.RecentRuns()
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		payload := map[string]any{
+			"version":      buildVersion(),
 			"model":        cfg.LLMModel,
 			"workers":      cfg.Workers,
 			"active_jobs":  active,
@@ -272,7 +289,11 @@ func buildHTTPHandler(cfg config.Config, pool *worker.Pool, st *store.Store, mc 
 			"reviewed_prs": reviewed,
 			"metrics":      mc.Snapshot(active, depth, reviewed),
 			"recent_runs":  recent,
-		})
+		}
+		if updates != nil {
+			payload["update"] = updates.Status()
+		}
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	mux.HandleFunc("/metrics", requireAdminToken(cfg.AdminToken, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

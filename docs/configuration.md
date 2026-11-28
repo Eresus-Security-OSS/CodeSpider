@@ -41,6 +41,7 @@ String values support optional `${ENV_VAR}` expansion (for example, `api_key: "$
 | `daemon.data_dir` | `./data` | No | Directory for git mirrors, worktrees, and `state.json` |
 | `daemon.workers` | `2` | No | Number of concurrent PR review workers |
 | `daemon.reconcile_interval_seconds` | `300` | No | Interval for periodic reconciliation |
+| `daemon.update_check_hours` | `0` (off) | No | Hours between checks for a newer release tag on `api.github.com`. `0` disables it, so the daemon makes no outbound update calls. When enabled, a newer release is logged once and exposed under `update` in `/status`. Needs a release or image build that stamps a version (see below); development builds are never compared. |
 | `daemon.log_level` | `info` | No | Log level (`debug`, `info`, `warn`, `error`) |
 
 ## Repository Configuration (`.codespider.yaml` & `AGENTS.md`)
@@ -97,3 +98,11 @@ Automatic-review gating and pre-merge checks:
 ### Fork pull requests
 
 Pull requests from a fork are untrusted, so nothing is read from the fork's head for them. The review uses the **base branch** versions of `.codespider.yaml`, `AGENTS.md`, `.gitea/review-instructions.md`, `.codespider/instructions.md` (including `instructions` and `path_instructions`), and `CODEOWNERS` for reviewer assignment, read from the cached mirror. The repository keeps its review rules, while a fork author cannot disable gates, inject prompt instructions, or choose reviewers. If the base branch has none of these files, the fork PR is reviewed with defaults and no extra instructions. The mirror is refreshed on each checkout, so a base-branch change applies from the next review.
+
+## Updating CodeSpider
+
+CodeSpider never replaces its own binary. It ships as a container image (`ghcr.io/eresus-security-oss/codespider`, built on `v*` tags) and from source, so updating means pulling the new image or rebuilding.
+
+- `codespider version` prints the build version. `codespider update` asks `api.github.com` for the highest stable `vMAJOR.MINOR.PATCH` tag and prints the matching `docker pull`, `docker compose pull && docker compose up -d`, or `git checkout` command when a newer one exists. Pre-release tags are ignored.
+- Release images are stamped with the tag via the `VERSION` build argument (`-X main.version`). A source build can stamp one with `go build -ldflags "-X main.version=v1.2.3" ./cmd/codespider`; an unstamped build reports `dev` and the check makes no network request.
+- Set `daemon.update_check_hours` to have the daemon check periodically. A failed re-check keeps an update that an earlier check already found.

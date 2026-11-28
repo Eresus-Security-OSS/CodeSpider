@@ -11,10 +11,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 
-# Build static binary using Go module + build caches
+# Build static binary using Go module + build caches. VERSION is stamped into the binary for update checks.
+ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/codespider ./cmd/codespider
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/codespider ./cmd/codespider
 
 # Stage git binary, HTTPS remote helpers, and their Debian 13 shared libraries for distroless
 RUN set -eux; \

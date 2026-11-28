@@ -76,7 +76,7 @@ flowchart TD
 | **Capability Security & Audit** | Fail-closed tool permissions, base-branch trusted `.codespider.yaml`, origin-pinned git auth, container-only PoC sandbox, and `audit.jsonl`. |
 | **Review Memory & SARIF** | Authorized feedback suppression, incident-aware context, policy simulation, and SARIF 2.1.0 export (`--sarif`). |
 | **Interactive Commands** | Mention `@codespider` with `/review`, `/redteam`, `/summary`, `/ci`, `/fix`, `/pause`, `/resume`, `/resolve`, `/help`, or ask questions in PR/inline threads. |
-| **Observability, CLI & Bench** | `codespider review`, `codespider bench`, `codespider healthcheck`, SSE `/events`, Dry-Run Playground, Prometheus `/metrics`, and `SIGHUP` reload. |
+| **Observability, CLI & Bench** | `codespider review`, `codespider bench`, `codespider healthcheck`, `codespider version`, `codespider update` (release check, opt-in daemon check), SSE `/events`, Dry-Run Playground, Prometheus `/metrics`, and `SIGHUP` reload. |
 
 ## Review Skills
 
