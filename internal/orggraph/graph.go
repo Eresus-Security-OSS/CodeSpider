@@ -325,8 +325,13 @@ type MergeCheckResult struct {
 // SpeculativeMergeCheck tests merging prASHA and prBSHA inside a disposable detached worktree
 // without mutating any branch or cached mirror refs.
 func SpeculativeMergeCheck(ctx context.Context, ws *workspace.Manager, owner, repo, cloneURL, prASHA, prBSHA string) (MergeCheckResult, error) {
+	prASHA = strings.TrimSpace(prASHA)
+	prBSHA = strings.TrimSpace(prBSHA)
 	if ws == nil || prASHA == "" || prBSHA == "" {
 		return MergeCheckResult{}, fmt.Errorf("workspace and both commit SHAs are required")
+	}
+	if strings.HasPrefix(prASHA, "-") || strings.HasPrefix(prBSHA, "-") {
+		return MergeCheckResult{}, fmt.Errorf("invalid commit SHA: leading '-' is not allowed")
 	}
 	wtDir, cleanup, err := ws.CheckoutPRReadOnly(ctx, owner, repo, cloneURL, prASHA)
 	if err != nil {
@@ -336,6 +341,12 @@ func SpeculativeMergeCheck(ctx context.Context, ws *workspace.Manager, owner, re
 
 	cmd := exec.CommandContext(ctx, "git",
 		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.fsmonitor=false",
+		"-c", "submodule.recurse=false",
+		"-c", "filter.lfs.smudge=",
+		"-c", "filter.lfs.process=",
+		"-c", "filter.lfs.clean=",
+		"-c", "diff.external=",
 		"-c", "user.name=CodeSpider",
 		"-c", "user.email=codespider@local",
 		"merge", "--no-commit", "--no-ff", prBSHA,

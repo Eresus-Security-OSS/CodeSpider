@@ -101,9 +101,10 @@ func runReviewCLI(args []string) int {
 		Metrics:                   metrics.NewCollector(),
 		Memory:                    memStore,
 		Sandbox: sandbox.NewExecutor(sandbox.Config{
-			Mode:    cfg.SandboxMode,
-			Runtime: cfg.SandboxRuntime,
-			Image:   cfg.SandboxImage,
+			Mode:               cfg.SandboxMode,
+			Runtime:            cfg.SandboxRuntime,
+			Image:              cfg.SandboxImage,
+			RequireImageDigest: cfg.SandboxRequireImageDigest,
 		}),
 		Logger: logger,
 	})

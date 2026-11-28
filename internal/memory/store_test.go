@@ -83,4 +83,11 @@ func TestMemoryAuthorizationFilteringIncidentsAndSimulation(t *testing.T) {
 	if err != nil || !removed {
 		t.Fatalf("expected Delete(R-1) to succeed, removed=%v err=%v", removed, err)
 	}
+	removed, err = st.Delete(true, "INC-42")
+	if err != nil || !removed {
+		t.Fatalf("expected Delete(INC-42) to succeed, removed=%v err=%v", removed, err)
+	}
+	if len(st.Export().Incidents) != 0 {
+		t.Fatalf("expected 0 incidents after delete, got %d", len(st.Export().Incidents))
+	}
 }

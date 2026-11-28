@@ -36,3 +36,24 @@ func TestCollectorSnapshotAndPrometheus(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordWebhookBoundsUnknownEventCardinality(t *testing.T) {
+	c := NewCollector()
+	for i := 0; i < 50; i++ {
+		c.RecordWebhook("untrusted-event-"+strings.Repeat("x", i+1), "rejected")
+	}
+	c.RecordWebhook("", "rejected")
+
+	if len(c.webhookByLabel) != 2 {
+		t.Fatalf("expected 2 bounded label keys (other, unknown), got %d: %+v", len(c.webhookByLabel), c.webhookByLabel)
+	}
+	var buf bytes.Buffer
+	c.WritePrometheus(&buf, 0, 0, 0)
+	text := buf.String()
+	if !strings.Contains(text, `codespider_webhooks_total{event="other",outcome="rejected"} 50`) {
+		t.Fatalf("expected unrecognized events to collapse into other:\n%s", text)
+	}
+	if !strings.Contains(text, `codespider_webhooks_total{event="unknown",outcome="rejected"} 1`) {
+		t.Fatalf("expected empty event to map to unknown:\n%s", text)
+	}
+}
