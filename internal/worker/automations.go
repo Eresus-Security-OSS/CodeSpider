@@ -55,8 +55,14 @@ func (p *Pool) runPostReviewAutomations(
 		}
 	}
 
-	if repoCfg.AutoAssignReviewers && t.Kind == "pr_review" && wtDir != "" && policy.CheckSideEffectAllowed(policy.EffectMutateLabelsOrReviewer, perms) == nil {
-		rules := repoconfig.LoadCodeOwners(wtDir)
+	if repoCfg.AutoAssignReviewers && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectMutateLabelsOrReviewer, perms) == nil {
+		// Fork PRs must not choose their own reviewers, so their CODEOWNERS comes from the base branch.
+		var rules []repoconfig.OwnerRule
+		if t.IsFork {
+			rules = repoconfig.LoadCodeOwnersFrom(p.baseFileReader(ctx, t))
+		} else {
+			rules = repoconfig.LoadCodeOwners(wtDir)
+		}
 		changed := repoconfig.ExtractChangedPaths(diff)
 		reviewers := repoconfig.MatchCodeOwners(rules, changed, prAuthor, p.authorName)
 		if len(reviewers) > 0 {

@@ -25,8 +25,18 @@ func LoadCodeOwners(worktreeDir string) []OwnerRule {
 	if worktreeDir == "" {
 		return nil
 	}
+	return LoadCodeOwnersFrom(func(rel string) ([]byte, error) {
+		return workspace.ReadSafeFile(worktreeDir, rel, maxRepoConfigBytes)
+	})
+}
+
+// LoadCodeOwnersFrom parses the first CODEOWNERS file that read can return.
+func LoadCodeOwnersFrom(read FileReader) []OwnerRule {
+	if read == nil {
+		return nil
+	}
 	for _, rel := range codeOwnerFiles {
-		raw, err := workspace.ReadSafeFile(worktreeDir, rel, maxRepoConfigBytes)
+		raw, err := read(rel)
 		if err != nil {
 			continue
 		}

@@ -81,25 +81,9 @@ func LoadWithTrustedBase(worktreeDir string, trustedBaseYAML []byte) Config {
 		return cfg
 	}
 
-	var sections []string
-	for _, rel := range instructionFiles {
-		raw, err := workspace.ReadSafeFile(worktreeDir, rel, maxInstructionBytes+1)
-		if err != nil {
-			continue
-		}
-		text := strings.TrimSpace(string(raw))
-		if text == "" {
-			continue
-		}
-		if len(text) > maxInstructionBytes {
-			text = text[:maxInstructionBytes] + "\n... (truncated)"
-		}
-		sections = append(sections, "### From "+rel+"\n"+text)
-	}
-	if cfg.Instructions != "" {
-		sections = append(sections, "### From .codespider.yaml\n"+strings.TrimSpace(cfg.Instructions))
-	}
-	cfg.Instructions = strings.Join(sections, "\n\n")
+	cfg.Instructions = buildInstructions(func(rel string) ([]byte, error) {
+		return workspace.ReadSafeFile(worktreeDir, rel, maxInstructionBytes+1)
+	}, cfg.Instructions)
 	return cfg
 }
 

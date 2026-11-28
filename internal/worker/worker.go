@@ -571,11 +571,14 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 			}
 		}
 	}
-	if t.IsFork && len(trustedBaseYAML) == 0 {
-		// Untrusted fork PRs must never disable review gates or override policy via a PR-added .codespider.yaml.
-		trustedBaseYAML = []byte("enabled: true\n")
+	var repoCfg repoconfig.Config
+	if t.IsFork {
+		// Untrusted fork PRs contribute no settings or prompt instructions: policy, AGENTS.md-style
+		// instruction files, and path_instructions all come from the base branch.
+		repoCfg = repoconfig.LoadFromBase(trustedBaseYAML, p.baseFileReader(jobCtx, t))
+	} else {
+		repoCfg = repoconfig.LoadWithTrustedBase(wtDir, trustedBaseYAML)
 	}
-	repoCfg := repoconfig.LoadWithTrustedBase(wtDir, trustedBaseYAML)
 	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" && !repoCfg.Enabled {
 		p.logger.Info("skipping PR review per .codespider.yaml", "pr", prKey)
 		if p.gitea != nil {
