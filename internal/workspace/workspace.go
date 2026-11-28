@@ -103,7 +103,7 @@ func (m *Manager) checkoutPR(ctx context.Context, owner, repo, cloneURL, sha str
 		}
 	} else {
 		needFetch := true
-		if readOnly && isValidCommitSHA(sha) {
+		if readOnly && IsValidCommitSHA(sha) {
 			if _, revErr := m.runGitOutput(ctx, mirrorDir, 1024, "rev-parse", "--verify", sha+"^{commit}"); revErr == nil {
 				needFetch = false
 			}
@@ -168,7 +168,7 @@ func (m *Manager) CommitAndPushWithGuard(ctx context.Context, worktreeDir, clone
 
 	authArgs := gitAuthArgs(cloneURL, m.token)
 	if expectedHeadSHA != "" {
-		if !isValidCommitSHA(expectedHeadSHA) {
+		if !IsValidCommitSHA(expectedHeadSHA) {
 			return "", fmt.Errorf("invalid expectedHeadSHA %q", expectedHeadSHA)
 		}
 		lsArgs := append(append([]string(nil), authArgs...), "ls-remote", cloneURL, "refs/heads/"+headBranch)
@@ -249,7 +249,7 @@ func (m *Manager) DiffCommits(ctx context.Context, worktreeDir, baseSHA, headSHA
 	if worktreeDir == "" {
 		return "", fmt.Errorf("worktreeDir is required")
 	}
-	if !isValidCommitSHA(baseSHA) || !isValidCommitSHA(headSHA) {
+	if !IsValidCommitSHA(baseSHA) || !IsValidCommitSHA(headSHA) {
 		return "", fmt.Errorf("invalid commit SHA range")
 	}
 	out, err := m.runGitOutput(ctx, worktreeDir, maxDiffBytes, "diff", "--no-ext-diff", "--unified=3", baseSHA+".."+headSHA, "--")
@@ -452,7 +452,7 @@ func (m *Manager) FileForensics(ctx context.Context, worktreeDir, relPath string
 // CommitPatches returns commit-by-commit patches between baseRef and headSHA (capped at 2 MiB)
 // for scanning intermediate commits that may contain deleted secrets.
 func (m *Manager) CommitPatches(ctx context.Context, worktreeDir, baseRef, headSHA string) (string, error) {
-	if worktreeDir == "" || !isValidCommitSHA(headSHA) {
+	if worktreeDir == "" || !IsValidCommitSHA(headSHA) {
 		return "", fmt.Errorf("worktreeDir and valid headSHA are required")
 	}
 	if baseRef == "" || strings.HasPrefix(baseRef, "-") {
@@ -463,7 +463,7 @@ func (m *Manager) CommitPatches(ctx context.Context, worktreeDir, baseRef, headS
 	for _, candidate := range []string{baseRef, "origin/" + baseRef, "refs/heads/" + baseRef} {
 		if out, err := m.runGitOutput(ctx, worktreeDir, 1024, "rev-parse", "--verify", candidate); err == nil {
 			sha := strings.TrimSpace(out)
-			if isValidCommitSHA(sha) {
+			if IsValidCommitSHA(sha) {
 				baseSHA = sha
 				break
 			}
@@ -582,11 +582,10 @@ func ReadSafeFile(rootDir, relPath string, maxBytes int64) ([]byte, error) {
 
 // WriteSafeFile writes data to relPath inside rootDir after verifying no symlink traversal or .git write.
 func WriteSafeFile(rootDir, relPath string, data []byte) error {
-	clean := filepath.ToSlash(filepath.Clean(relPath))
-	if runtime.GOOS == "windows" {
-		clean = strings.ToLower(clean)
-	}
-	if clean == ".git" || strings.HasPrefix(clean, ".git/") || strings.Contains(clean, "/.git/") {
+	// Compare case-insensitively on every OS: macOS (APFS) and Windows (NTFS) default to
+	// case-insensitive filesystems, so ".GIT/hooks/x" would otherwise reach the real .git dir.
+	clean := strings.ToLower(filepath.ToSlash(filepath.Clean(relPath)))
+	if clean == ".git" || strings.HasPrefix(clean, ".git/") || strings.HasSuffix(clean, "/.git") || strings.Contains(clean, "/.git/") {
 		return fmt.Errorf("refusing to write inside .git: %s", relPath)
 	}
 	full, err := ResolveSafePath(rootDir, relPath)
@@ -697,7 +696,8 @@ func gitAuthArgs(rawURL, token string) []string {
 	return []string{"-c", "http.extraHeader=Authorization: Basic " + basic}
 }
 
-func isValidCommitSHA(sha string) bool {
+// IsValidCommitSHA reports whether sha is 7-64 hex characters, which is safe to pass to git as a revision argument.
+func IsValidCommitSHA(sha string) bool {
 	if len(sha) < 7 || len(sha) > 64 {
 		return false
 	}

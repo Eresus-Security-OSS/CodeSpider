@@ -330,8 +330,8 @@ func SpeculativeMergeCheck(ctx context.Context, ws *workspace.Manager, owner, re
 	if ws == nil || prASHA == "" || prBSHA == "" {
 		return MergeCheckResult{}, fmt.Errorf("workspace and both commit SHAs are required")
 	}
-	if strings.HasPrefix(prASHA, "-") || strings.HasPrefix(prBSHA, "-") {
-		return MergeCheckResult{}, fmt.Errorf("invalid commit SHA: leading '-' is not allowed")
+	if !workspace.IsValidCommitSHA(prASHA) || !workspace.IsValidCommitSHA(prBSHA) {
+		return MergeCheckResult{}, fmt.Errorf("invalid commit SHA: must be 7-64 hex characters")
 	}
 	wtDir, cleanup, err := ws.CheckoutPRReadOnly(ctx, owner, repo, cloneURL, prASHA)
 	if err != nil {
@@ -349,7 +349,7 @@ func SpeculativeMergeCheck(ctx context.Context, ws *workspace.Manager, owner, re
 		"-c", "diff.external=",
 		"-c", "user.name=CodeSpider",
 		"-c", "user.email=codespider@local",
-		"merge", "--no-commit", "--no-ff", prBSHA,
+		"merge", "--no-commit", "--no-ff", "--", prBSHA,
 	)
 	cmd.Dir = wtDir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")

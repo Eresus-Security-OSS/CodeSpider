@@ -129,4 +129,7 @@ func TestSpeculativeMergeCheckDetectsConflict(t *testing.T) {
 	if _, err := SpeculativeMergeCheck(ctx, ws, "acme", "app", origin, "-bad", shaB); err == nil {
 		t.Fatal("expected flag-like prASHA to be rejected")
 	}
+	if _, err := SpeculativeMergeCheck(ctx, ws, "acme", "app", origin, shaA, "main"); err == nil {
+		t.Fatal("expected non-SHA revision to be rejected")
+	}
 }
