@@ -65,6 +65,7 @@ type Pool struct {
 	crossRepoAllowlist      []string
 	sandboxMode             string
 	alertWebhookURL         string
+	jobTimeout              time.Duration
 	queue                   chan gitea.ReviewTrigger
 	gitea                   *gitea.Client
 	workspace               *workspace.Manager
@@ -88,8 +89,10 @@ type Pool struct {
 
 // Config bundles dependencies for the worker Pool.
 type Config struct {
-	Workers                   int
-	QueueSize                 int
+	Workers   int
+	QueueSize int
+	// JobTimeout bounds one PR review job end to end. Zero means 5 minutes.
+	JobTimeout                time.Duration
 	EnableWrite               bool
 	EnableProofOfBug          bool
 	AuthorName                string
@@ -146,6 +149,7 @@ func NewPool(cfg Config) *Pool {
 		crossRepoAllowlist:      append([]string(nil), cfg.CrossRepoAllowlist...),
 		sandboxMode:             cfg.SandboxMode,
 		alertWebhookURL:         cfg.AlertWebhookURL,
+		jobTimeout:              jobTimeoutOrDefault(cfg.JobTimeout),
 		queue:                   make(chan gitea.ReviewTrigger, cfg.QueueSize),
 		gitea:                   cfg.Gitea,
 		workspace:               cfg.Workspace,
@@ -512,7 +516,7 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 
 	// Cancel any in-flight run for the same PR so newer commits supersede older ones.
-	jobCtx, cancel := context.WithTimeout(parentCtx, 5*time.Minute)
+	jobCtx, cancel := context.WithTimeout(parentCtx, p.jobTimeout)
 	var jobID uint64
 	if !t.DryRun {
 		jobID = p.registerActive(prKey, cancel)

@@ -30,7 +30,9 @@ String values support optional `${ENV_VAR}` expansion (for example, `api_key: "$
 | `llm.fast_model` | `""` | No | Optional fast/low-cost model for small PRs (<=50 lines), `/summary`, and `/ci` |
 | `llm.timeout_seconds` | `120` | No | Per-request HTTP timeout for LLM calls |
 | `llm.max_retries` | `2` | No | Max retries with exponential backoff on transient LLM errors (`429`, `5xx`) |
+| `llm.reasoning_effort` | `""` (omitted) | No | Sent as `reasoning_effort` on every chat request: `none`, `minimal`, `low`, `medium`, or `high`. Reasoning-capable models (for example Qwen via Ollama) can spend most of a review in hidden thinking tokens, so `none` or `low` helps on slow hardware. Providers that reject the field will return an error, so leave it empty unless your endpoint supports it. |
 | `agent.max_steps` | `12` | No | Max tool-calling turns per PR run |
+| `agent.job_timeout_seconds` | `300` | No | Wall-clock budget for one PR review job, 30 to 7200. Raise it for slow self-hosted models; it is separate from `llm.timeout_seconds`, which only bounds a single LLM request. |
 | `agent.max_tokens_per_run` | `32000` | No | Token budget cap per PR run |
 | `agent.skills_dir` | `./skills` | No | Directory containing `<skill>/SKILL.md` folders |
 | `agent.default_skills` | `[security, code-quality, testing]` | No | List of skills loaded (`security`, `code-quality`, `testing`, `performance`, `concurrency`, `chaos-resilience`) |

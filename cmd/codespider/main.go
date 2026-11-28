@@ -116,7 +116,8 @@ func main() {
 	wsManager.CleanupStaleWorktrees(ctx)
 
 	llmClient := llm.NewClient(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, cfg.LLMTimeout).
-		WithRetry(cfg.LLMMaxRetries, time.Second)
+		WithRetry(cfg.LLMMaxRetries, time.Second).
+		WithReasoningEffort(cfg.LLMReasoningEffort)
 
 	runner := agent.NewRunner(llmClient, agent.Options{
 		MaxSteps:            cfg.AgentMaxSteps,
@@ -143,6 +144,7 @@ func main() {
 		AllowSameOwnerCrossRepo:   cfg.AllowSameOwnerCrossRepo,
 		CrossRepoAllowlist:        cfg.CrossRepoAllowlist,
 		SandboxMode:               cfg.SandboxMode,
+		JobTimeout:                cfg.AgentJobTimeout,
 		AlertWebhookURL:           cfg.AlertWebhookURL,
 		Gitea:                     giteaClient,
 		Workspace:                 wsManager,
