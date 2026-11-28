@@ -13,11 +13,12 @@ import (
 	"go/token"
 	"go/types"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // Symbol represents an exported or unexported Go declaration extracted from AST.
@@ -114,12 +115,12 @@ func (idx *Indexer) IndexWorktree(rootDir, commitSHA string) (*Snapshot, error) 
 			return nil
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "node_modules" {
+			if strings.EqualFold(d.Name(), ".git") || d.Name() == "vendor" || d.Name() == "node_modules" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".go") {
+		if !d.Type().IsRegular() || !strings.HasSuffix(d.Name(), ".go") {
 			return nil
 		}
 		rel, relErr := filepath.Rel(rootDir, path)
@@ -143,8 +144,7 @@ func (idx *Indexer) IndexWorktree(rootDir, commitSHA string) (*Snapshot, error) 
 		var parsedFiles []*ast.File
 
 		for _, relFile := range files {
-			full := filepath.Join(rootDir, filepath.FromSlash(relFile))
-			raw, readErr := os.ReadFile(full)
+			raw, readErr := workspace.ReadSafeFile(rootDir, relFile, 2<<20)
 			if readErr != nil {
 				continue
 			}
@@ -526,7 +526,7 @@ func shouldIncludeGoFile(raw []byte) bool {
 }
 
 func readGoModulePath(rootDir string) string {
-	raw, err := os.ReadFile(filepath.Join(rootDir, "go.mod"))
+	raw, err := workspace.ReadSafeFile(rootDir, "go.mod", 256*1024)
 	if err != nil {
 		return ""
 	}

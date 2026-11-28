@@ -5,13 +5,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/evidence"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 var (
@@ -45,10 +45,8 @@ func AnalyzeSecurityInvariantsAST(baseWorktree, headWorktree, diff, commitSHA st
 			if !strings.HasSuffix(file, ".go") {
 				continue
 			}
-			basePath := filepath.Join(baseWorktree, filepath.FromSlash(file))
-			headPath := filepath.Join(headWorktree, filepath.FromSlash(file))
-			baseGuards, baseOK := extractGoGuardCalls(basePath)
-			headGuards, headOK, headFindings := inspectGoHeadSecurityAST(headPath, file, addedSet, commitSHA)
+			baseGuards, baseOK := extractGoGuardCalls(baseWorktree, file)
+			headGuards, headOK, headFindings := inspectGoHeadSecurityAST(headWorktree, file, addedSet, commitSHA)
 			if baseOK && headOK {
 				astCheckedFiles[file] = true
 				for g, lineNo := range baseGuards {
@@ -151,13 +149,13 @@ func AnalyzeSecurityInvariantsAST(baseWorktree, headWorktree, diff, commitSHA st
 	return findings
 }
 
-func extractGoGuardCalls(fullPath string) (map[string]int64, bool) {
-	raw, err := os.ReadFile(fullPath)
+func extractGoGuardCalls(worktreeRoot, relFile string) (map[string]int64, bool) {
+	raw, err := workspace.ReadSafeFile(worktreeRoot, relFile, 2<<20)
 	if err != nil {
 		return nil, false
 	}
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, fullPath, raw, 0)
+	file, err := parser.ParseFile(fset, relFile, raw, 0)
 	if err != nil {
 		return nil, false
 	}
@@ -176,21 +174,29 @@ func extractGoGuardCalls(fullPath string) (map[string]int64, bool) {
 	return guards, true
 }
 
-func inspectGoHeadSecurityAST(fullPath, relFile string, addedLines map[int64]bool, sha string) (map[string]int64, bool, []evidence.Finding) {
-	guards, ok := extractGoGuardCalls(fullPath)
-	if !ok {
+func inspectGoHeadSecurityAST(worktreeRoot, relFile string, addedLines map[int64]bool, sha string) (map[string]int64, bool, []evidence.Finding) {
+	raw, err := workspace.ReadSafeFile(worktreeRoot, relFile, 2<<20)
+	if err != nil {
 		return nil, false, nil
 	}
-	if strings.HasSuffix(relFile, "_test.go") {
-		return guards, true, nil
-	}
-	raw, err := os.ReadFile(fullPath)
-	if err != nil {
-		return guards, true, nil
-	}
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, fullPath, raw, 0)
+	file, err := parser.ParseFile(fset, relFile, raw, 0)
 	if err != nil {
+		return nil, false, nil
+	}
+	guards := make(map[string]int64)
+	ast.Inspect(file, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := callTargetName(ce)
+		if guardTokenRe.MatchString(name) {
+			guards[guardTokenRe.FindString(name)] = int64(fset.Position(ce.Pos()).Line)
+		}
+		return true
+	})
+	if strings.HasSuffix(relFile, "_test.go") {
 		return guards, true, nil
 	}
 

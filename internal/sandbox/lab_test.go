@@ -18,6 +18,12 @@ func TestValidatePoCTestSource(t *testing.T) {
 	if err := ValidatePoCTestSource("TestBad", "package p\nimport (\"os/exec\"; \"testing\")\nfunc TestBad(t *testing.T) { _ = exec.Command }\n"); err == nil {
 		t.Fatal("expected os/exec import in PoC test to be blocked")
 	}
+	if err := ValidatePoCTestSource("TestCgo", "package p\nimport \"C\"\nimport \"testing\"\nfunc TestCgo(t *testing.T) {}\n"); err == nil {
+		t.Fatal("expected C (cgo) import in PoC test to be blocked")
+	}
+	if err := ValidatePoCTestSource("TestNetSub", "package p\nimport (\"net/rpc\"; \"testing\")\nfunc TestNetSub(t *testing.T) { _ = rpc.DefaultServer }\n"); err == nil {
+		t.Fatal("expected net/rpc import in PoC test to be blocked")
+	}
 	if err := ValidatePoCTestSource("TestMissing", "package p\nimport \"testing\"\nfunc TestOther(t *testing.T) {}\n"); err == nil {
 		t.Fatal("expected missing test function to fail validation")
 	}

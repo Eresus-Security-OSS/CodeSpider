@@ -5,11 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/evidence"
+	"github.com/Eresus-Security-OSS/CodeSpider/internal/workspace"
 )
 
 // CFGBlock represents a basic block in an intraprocedural Go control-flow graph.
@@ -130,7 +130,7 @@ func AnalyzeGoCFGAndDataFlow(headWorktree string, changedPaths []string, commitS
 		if !strings.HasSuffix(slash, ".go") || strings.HasSuffix(slash, "_test.go") {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(headWorktree, filepath.FromSlash(slash)))
+		raw, err := workspace.ReadSafeFile(headWorktree, slash, 2<<20)
 		if err != nil {
 			continue
 		}
