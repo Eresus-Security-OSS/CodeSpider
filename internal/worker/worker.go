@@ -263,6 +263,7 @@ func (p *Pool) ReconcileOnce(ctx context.Context, repos []string) int {
 			}
 			err := p.Enqueue(gitea.ReviewTrigger{
 				Kind:     "pr_review",
+				IsFork:   gitea.IsForkPR(pr, pr.Base.Repo),
 				Owner:    target.owner,
 				Repo:     target.repo,
 				CloneURL: cloneURL,
@@ -449,7 +450,7 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 			if t.PRBody == "" {
 				t.PRBody = pr.Body
 			}
-			if pr.Head.Repo.ID != 0 && pr.Base.Repo.ID != 0 && pr.Head.Repo.ID != pr.Base.Repo.ID {
+			if gitea.IsForkPR(pr, pr.Base.Repo) {
 				t.IsFork = true
 			}
 			prAuthor = pr.User.Username
@@ -557,6 +558,10 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 				break
 			}
 		}
+	}
+	if t.IsFork && len(trustedBaseYAML) == 0 {
+		// Untrusted fork PRs must never disable review gates or override policy via a PR-added .codespider.yaml.
+		trustedBaseYAML = []byte("enabled: true\n")
 	}
 	repoCfg := repoconfig.LoadWithTrustedBase(wtDir, trustedBaseYAML)
 	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" && !repoCfg.Enabled {

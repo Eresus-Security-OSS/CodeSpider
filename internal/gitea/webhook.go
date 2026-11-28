@@ -342,6 +342,11 @@ func IsBotUser(u User) bool {
 	return strings.HasSuffix(name, "[bot]")
 }
 
+// IsForkPR reports whether pr originates from a different repository than baseRepo.
+func IsForkPR(pr PullRequest, baseRepo Repository) bool {
+	return detectForkPR(pr, baseRepo)
+}
+
 func detectForkPR(pr PullRequest, baseRepo Repository) bool {
 	if pr.Head.Repo.ID != 0 && pr.Base.Repo.ID != 0 && pr.Head.Repo.ID != pr.Base.Repo.ID {
 		return true
