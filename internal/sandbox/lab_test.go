@@ -24,6 +24,12 @@ func TestValidatePoCTestSource(t *testing.T) {
 	if err := ValidatePoCTestSource("TestNetSub", "package p\nimport (\"net/rpc\"; \"testing\")\nfunc TestNetSub(t *testing.T) { _ = rpc.DefaultServer }\n"); err == nil {
 		t.Fatal("expected net/rpc import in PoC test to be blocked")
 	}
+	if err := ValidatePoCTestSource("TestURLParse", "package p\nimport (\"net/url\"; \"net/netip\"; \"testing\")\nfunc TestURLParse(t *testing.T) { _, _ = url.Parse(\"http://x\"); _, _ = netip.ParseAddr(\"1.2.3.4\") }\n"); err != nil {
+		t.Fatalf("expected pure-parsing net/url and net/netip imports to be allowed, got: %v", err)
+	}
+	if err := ValidatePoCTestSource("TestHTTPTest", "package p\nimport (\"net/http/httptest\"; \"testing\")\nfunc TestHTTPTest(t *testing.T) { _ = httptest.NewRecorder }\n"); err == nil {
+		t.Fatal("expected net/http/httptest import to stay blocked")
+	}
 	if err := ValidatePoCTestSource("TestMissing", "package p\nimport \"testing\"\nfunc TestOther(t *testing.T) {}\n"); err == nil {
 		t.Fatal("expected missing test function to fail validation")
 	}

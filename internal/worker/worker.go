@@ -254,7 +254,7 @@ func (p *Pool) ReconcileOnce(ctx context.Context, repos []string) int {
 				continue
 			}
 			prKey := store.PRKey(target.owner, target.repo, pr.Number)
-			if p.IsActive(prKey) || p.store.IsAlreadyReviewed(prKey, pr.Head.SHA) {
+			if p.IsActive(prKey) || p.store.IsPaused(prKey) || p.store.IsAlreadyReviewed(prKey, pr.Head.SHA) {
 				continue
 			}
 			cloneURL := pr.Base.Repo.CloneURL
@@ -409,6 +409,18 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 				FinishedAt: time.Now().UTC(),
 			})
 		}
+		return out, nil
+	}
+
+	// Control commands mutate per-PR bot state and never clone or call the LLM.
+	if isControlCommand(t.Command) {
+		return out, p.runControlCommand(parentCtx, t, prKey, startedAt, &out)
+	}
+
+	// /pause suppresses automatic reviews; explicit /review and /redteam still run.
+	if !t.DryRun && t.Kind == "pr_review" && t.Command == "" && p.store != nil && p.store.IsPaused(prKey) {
+		p.logger.Info("skipping automatic review: PR is paused", "pr", prKey)
+		p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 		return out, nil
 	}
 
@@ -572,6 +584,16 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 		p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
 		return out, nil
 	}
+	if !t.DryRun && t.Kind == "pr_review" && t.Command != "force_review" && t.Command != "redteam" {
+		if reason := repoCfg.SkipReason(t.BaseRef, t.PRTitle); reason != "" {
+			p.logger.Info("skipping automatic PR review per .codespider.yaml", "pr", prKey, "reason", reason)
+			if p.gitea != nil {
+				_ = p.gitea.SetCommitStatus(jobCtx, t.Owner, t.Repo, t.HeadSHA, "success", "CodeSpider skipped: "+reason)
+			}
+			p.metrics.RecordRun(t.Kind, "skipped", 0, 0, 0, time.Since(startedAt))
+			return out, nil
+		}
+	}
 	if len(repoCfg.IgnorePaths) > 0 {
 		var skipped []string
 		diff, skipped = repoconfig.FilterDiff(diff, repoCfg.IgnorePaths)
@@ -624,6 +646,9 @@ func (p *Pool) runJob(parentCtx context.Context, workerID int, t gitea.ReviewTri
 	}
 
 	t.RepoInstructions = repoCfg.Instructions
+	if pathInstr := repoCfg.InstructionsForPaths(repoconfig.ExtractChangedPaths(diff)); pathInstr != "" {
+		t.RepoInstructions = strings.TrimSpace(t.RepoInstructions + "\n\n" + pathInstr)
+	}
 	if len(t.RepoSkills) == 0 {
 		t.RepoSkills = repoCfg.Skills
 	}
@@ -894,7 +919,10 @@ func (p *Pool) buildHelpMessage() string {
 - `+"`@%s /ci`"+` — Diagnose failing CI / commit status checks for this PR.
 - `+"`@%s /fix <instructions>`"+` — Propose (or commit, when collaborator + write mode) targeted code fixes.
 - `+"`@%s <question>`"+` — Ask any question about the PR diff or surrounding codebase.
-- `+"`@%s /help`"+` — Show this command reference.`, bot, bot, bot, bot, bot, bot, bot)
+- `+"`@%s /pause`"+` — Pause automatic reviews on this PR (collaborators only); `+"`/review`"+` still works.
+- `+"`@%s /resume`"+` — Resume automatic reviews and review the current commit (collaborators only).
+- `+"`@%s /resolve`"+` — Resolve all open CodeSpider inline review threads on this PR (collaborators only).
+- `+"`@%s /help`"+` — Show this command reference.`, bot, bot, bot, bot, bot, bot, bot, bot, bot, bot)
 }
 
 func (p *Pool) finishWithError(prKey string, t gitea.ReviewTrigger, startedAt time.Time, steps, tokens, comments int, err error) {

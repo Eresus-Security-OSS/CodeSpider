@@ -228,14 +228,42 @@ func (c *Client) CreateReview(ctx context.Context, owner, repo string, number in
 	return c.doJSON(ctx, http.MethodPost, path, review, nil)
 }
 
-// ListPullReviews fetches existing reviews submitted on a pull request.
+// ListPullReviews fetches all reviews submitted on a pull request, following pagination.
 func (c *Client) ListPullReviews(ctx context.Context, owner, repo string, number int64) ([]PullReview, error) {
-	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews", url.PathEscape(owner), url.PathEscape(repo), number)
-	var reviews []PullReview
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &reviews); err != nil {
+	const pageSize, maxPages = 50, 20
+	var all []PullReview
+	for page := 1; page <= maxPages; page++ {
+		path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews?page=%d&limit=%d", url.PathEscape(owner), url.PathEscape(repo), number, page, pageSize)
+		var reviews []PullReview
+		if err := c.doJSON(ctx, http.MethodGet, path, nil, &reviews); err != nil {
+			return nil, err
+		}
+		all = append(all, reviews...)
+		if len(reviews) < pageSize {
+			break
+		}
+	}
+	return all, nil
+}
+
+// ListPullReviewComments returns the inline comments of one review.
+func (c *Client) ListPullReviewComments(ctx context.Context, owner, repo string, number, reviewID int64) ([]PullReviewComment, error) {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews/%d/comments", url.PathEscape(owner), url.PathEscape(repo), number, reviewID)
+	var comments []PullReviewComment
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &comments); err != nil {
 		return nil, err
 	}
-	return reviews, nil
+	return comments, nil
+}
+
+// ResolveReviewComment marks an inline review thread as resolved.
+//
+// Contract verified 2026-11-28 against https://gitea.com/swagger.v1.json (Gitea 29.0.0+dev):
+// POST /repos/{owner}/{repo}/pulls/comments/{id}/resolve answers 204, or 400/403/404. The
+// release that introduced this endpoint was not verified, so older servers may answer 404.
+func (c *Client) ResolveReviewComment(ctx context.Context, owner, repo string, commentID int64) error {
+	path := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/comments/%d/resolve", url.PathEscape(owner), url.PathEscape(repo), commentID)
+	return c.doJSON(ctx, http.MethodPost, path, nil, nil)
 }
 
 // AddIssueReaction adds an emoji reaction (e.g., "eyes") to an issue or pull request.

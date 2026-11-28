@@ -117,6 +117,20 @@ type PullReview struct {
 	SubmittedAt time.Time `json:"submitted_at"`
 }
 
+// PullReviewComment is an inline comment attached to a PR review. Resolver is non-nil once the thread is resolved.
+type PullReviewComment struct {
+	ID       int64  `json:"id"`
+	Body     string `json:"body"`
+	Path     string `json:"path"`
+	User     User   `json:"user"`
+	Resolver *User  `json:"resolver"`
+}
+
+// Resolved reports whether the comment thread has been marked resolved.
+func (c PullReviewComment) Resolved() bool {
+	return c.Resolver != nil && (c.Resolver.ID != 0 || c.Resolver.Username != "" || c.Resolver.Login != "")
+}
+
 // PullReviewCommentEvent represents a Gitea pull_request_review_comment webhook payload.
 type PullReviewCommentEvent struct {
 	Action      string      `json:"action"`

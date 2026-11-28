@@ -41,7 +41,8 @@ func (p *Pool) runPostReviewAutomations(
 	p.mu.Unlock()
 
 	if stickySummary && t.Kind == "pr_review" && policy.CheckSideEffectAllowed(policy.EffectPostComment, perms) == nil {
-		body := buildStickyWalkthrough(t, diff, res, secretFindings)
+		checks := repoCfg.EvaluatePreMergeChecks(t.PRTitle, t.PRBody, countDiffLines(diff))
+		body := buildStickyWalkthrough(t, diff, res, secretFindings, checks)
 		if err := p.gitea.UpsertStickyComment(ctx, t.Owner, t.Repo, t.PRNumber, stickySummaryMarker, body); err != nil {
 			p.logger.Warn("failed to upsert sticky summary comment", "pr", t.PRNumber, "err", err)
 		}
@@ -75,14 +76,16 @@ func (p *Pool) runPostReviewAutomations(
 	}
 }
 
-func buildStickyWalkthrough(t gitea.ReviewTrigger, diff string, res agent.RunResult, secrets []security.Finding) string {
+func buildStickyWalkthrough(t gitea.ReviewTrigger, diff string, res agent.RunResult, secrets []security.Finding, checks []repoconfig.CheckResult) string {
 	paths := repoconfig.ExtractChangedPaths(diff)
 	var b strings.Builder
 	b.WriteString(stickySummaryMarker + "\n")
 	b.WriteString("## CodeSpider Review Summary\n\n")
 	fmt.Fprintf(&b, "- **Commit:** `%s` | **Model:** `%s` | **Verdict:** `%s`\n", shortSHA(t.HeadSHA), res.ModelUsed, nonEmpty(res.Verdict, "COMMENT"))
-	fmt.Fprintf(&b, "- **Findings:** `%d` inline comments | **Blue-Team Refuted:** `%d` | **Secret Alerts:** `%d`\n\n", res.InlineComments, res.BlueTeamRefuted, len(secrets))
-
+	fmt.Fprintf(&b, "- **Findings:** `%d` inline comments | **Blue-Team Refuted:** `%d` | **Secret Alerts:** `%d`\n", res.InlineComments, res.BlueTeamRefuted, len(secrets))
+	writeChangeOverview(&b, diff)
+	b.WriteString("\n")
+	writeChecksSection(&b, checks)
 	if len(paths) > 0 {
 		b.WriteString("```mermaid\nflowchart LR\n  PR[\"PR Changes\"]\n")
 		areas := topLevelAreas(paths)

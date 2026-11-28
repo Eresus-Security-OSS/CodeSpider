@@ -59,7 +59,18 @@ var blockedPoCImports = map[string]bool{
 	"net/http": true,
 }
 
+// allowedNetPoCImports are pure parsing packages under net/ that cannot open connections,
+// so PoCs for URL/IP/address-handling bugs (SSRF filters, redirect checks) can still import them.
+var allowedNetPoCImports = map[string]bool{
+	"net/url":   true,
+	"net/netip": true,
+	"net/mail":  true,
+}
+
 func isBlockedPoCImport(p string) bool {
+	if allowedNetPoCImports[p] {
+		return false
+	}
 	return blockedPoCImports[p] || strings.HasPrefix(p, "net/") || strings.HasPrefix(p, "syscall/")
 }
 

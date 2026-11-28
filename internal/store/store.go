@@ -34,6 +34,7 @@ type RunRecord struct {
 type persistedState struct {
 	ReviewedSHAs map[string]string `json:"reviewed_shas"`
 	RecentRuns   []RunRecord       `json:"recent_runs"`
+	PausedPRs    map[string]bool   `json:"paused_prs,omitempty"`
 }
 
 // Store persists reviewed commit SHAs and recent run audit logs atomically to disk.
@@ -72,6 +73,44 @@ func Open(dataDir string) (*Store, error) {
 // PRKey formats a canonical identifier for a pull request.
 func PRKey(owner, repo string, prNumber int64) string {
 	return fmt.Sprintf("%s/%s#%d", owner, repo, prNumber)
+}
+
+// maxPausedPRs bounds the persisted pause set so a flood of /pause comments cannot grow state.json without limit.
+const maxPausedPRs = 5000
+
+// IsPaused reports whether automatic reviews are paused for prKey. It is safe on a nil Store.
+func (s *Store) IsPaused(prKey string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.PausedPRs[prKey]
+}
+
+// SetPaused pauses or resumes automatic reviews for prKey and persists the change.
+// It reports whether the paused state actually changed.
+func (s *Store) SetPaused(prKey string, paused bool) (changed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.PausedPRs[prKey] == paused {
+		return false, nil
+	}
+	if paused {
+		if len(s.state.PausedPRs) >= maxPausedPRs {
+			return false, fmt.Errorf("too many paused PRs (limit %d)", maxPausedPRs)
+		}
+		if s.state.PausedPRs == nil {
+			s.state.PausedPRs = make(map[string]bool)
+		}
+		s.state.PausedPRs[prKey] = true
+	} else {
+		delete(s.state.PausedPRs, prKey)
+	}
+	if err := s.saveLocked(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // IsAlreadyReviewed returns true if the given SHA was already reviewed for this PR.

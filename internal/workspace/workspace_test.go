@@ -298,9 +298,9 @@ func TestReadWriteSafeFileRejectsSymlinksAndGit(t *testing.T) {
 	if err != nil || string(got) != "abc" {
 		t.Fatalf("expected overwritten file without trailing bytes, got %q: %v", got, err)
 	}
-	if runtime.GOOS == "windows" {
-		if err := WriteSafeFile(root, ".GIT/hooks/pre-commit", []byte("bad")); err == nil {
-			t.Fatal("expected case-insensitive .git write to be rejected")
+	for _, bad := range []string{".GIT/hooks/pre-commit", "sub/.Git", "sub/.GIT/config"} {
+		if err := WriteSafeFile(root, bad, []byte("bad")); err == nil {
+			t.Fatalf("expected case-insensitive .git write %q to be rejected", bad)
 		}
 	}
 	if err := WriteSafeFile(root, ".git/hooks/pre-commit", []byte("bad")); err == nil {

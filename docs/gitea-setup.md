@@ -39,6 +39,9 @@ go build -o codespider ./cmd/codespider
   - `@codespider /summary` — Generate a structured PR walkthrough.
   - `@codespider /ci` — Diagnose failing CI / commit status checks.
   - `@codespider /fix <instructions>` — Propose (or commit in write mode for collaborators) targeted fixes.
+  - `@codespider /pause` — Pause automatic reviews on this PR (collaborators only). `/review` and `/redteam` still run on demand; the pause is persisted in `state.json`.
+  - `@codespider /resume` — Resume automatic reviews and review the current commit (collaborators only).
+  - `@codespider /resolve` — Resolve every open inline review thread authored by the bot on this PR (collaborators only). Uses `POST /repos/{owner}/{repo}/pulls/comments/{id}/resolve`, which older Gitea servers may not provide.
   - `@codespider /help` — Display available commands.
 - **One-Shot CLI Mode:** `./codespider review -f codespider.yaml --dry-run owner/repo#12`
 - **Health, Metrics, SSE & Playground:** Check `GET /healthz`, `GET /readyz`, `GET /status`, `GET /metrics` (Prometheus), `GET /events` (SSE stream), or open `GET /` (`/dashboard`) for the live UI and Dry-Run Playground. Send `SIGHUP` to hot-reload skills and budgets without restarting.
