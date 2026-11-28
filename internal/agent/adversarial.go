@@ -106,6 +106,8 @@ For each staged finding:
 					verdicts[args.Index] = v
 					obs = fmt.Sprintf("recorded %s for [%d]", v, args.Index)
 				}
+			} else if !blueTeamReadOnlyTools[tc.Function.Name] {
+				obs = fmt.Sprintf("error: tool %q is not permitted during Blue-Team verification", tc.Function.Name)
 			} else {
 				out, execErr := reg.Execute(ctx, tc.Function.Name, tc.Function.Arguments)
 				if execErr != nil {
@@ -147,18 +149,19 @@ For each staged finding:
 	return tokensUsed, len(refuted)
 }
 
+var blueTeamReadOnlyTools = map[string]bool{
+	"get_pr_diff":          true,
+	"get_incremental_diff": true,
+	"read_file":            true,
+	"search_code":          true,
+	"list_files":           true,
+	"inspect_go_symbols":   true,
+}
+
 func filterReadOnlyToolDefs(defs []llm.ToolDefinition) []llm.ToolDefinition {
-	allowed := map[string]bool{
-		"get_pr_diff":          true,
-		"get_incremental_diff": true,
-		"read_file":            true,
-		"search_code":          true,
-		"list_files":           true,
-		"inspect_go_symbols":   true,
-	}
 	var out []llm.ToolDefinition
 	for _, d := range defs {
-		if allowed[d.Function.Name] {
+		if blueTeamReadOnlyTools[d.Function.Name] {
 			out = append(out, d)
 		}
 	}
