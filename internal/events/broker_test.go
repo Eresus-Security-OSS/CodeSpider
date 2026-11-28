@@ -13,15 +13,17 @@ func TestBrokerPublishRecentAndSubscribe(t *testing.T) {
 	b.Publish(Event{Type: "tool_call", PRKey: "acme/api#1", Tool: "get_pr_diff", Message: "called"})
 	b.Publish(Event{Type: "run_finished", PRKey: "acme/api#1", Message: "done"})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	recent, ch := b.Subscribe(ctx)
+	recent := b.Recent()
 	if len(recent) != 3 {
 		t.Fatalf("expected history capped at 3, got %d", len(recent))
 	}
 	if recent[0].Type != "step" || recent[2].Type != "run_finished" {
 		t.Fatalf("unexpected history order: %+v", recent)
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch := b.Subscribe(ctx)
 
 	b.Publish(Event{Type: "blue_team", PRKey: "acme/api#1", Message: "verified"})
 	select {

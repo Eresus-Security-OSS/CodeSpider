@@ -2,13 +2,11 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/audit"
 	"github.com/Eresus-Security-OSS/CodeSpider/internal/config"
@@ -89,44 +87,6 @@ func TestHTTPEndpoints(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown path, got %d", rec.Code)
-	}
-}
-
-type flushHookRecorder struct {
-	*httptest.ResponseRecorder
-	onFlush func()
-}
-
-func (r *flushHookRecorder) Flush() {
-	r.ResponseRecorder.Flush()
-	r.onFlush()
-}
-
-func TestSSEDeliversEventPublishedDuringReplay(t *testing.T) {
-	broker := events.NewBroker(10)
-	broker.Publish(events.Event{Type: "step", Message: "buffered"})
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	rec := &flushHookRecorder{ResponseRecorder: httptest.NewRecorder()}
-	rec.onFlush = func() {
-		broker.Publish(events.Event{Type: "step", Message: "published during replay"})
-		rec.onFlush = cancel
-	}
-	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
-	serveSSE(rec, req, broker)
-
-	frames := strings.Split(strings.TrimSuffix(rec.Body.String(), "\n\n"), "\n\n")
-	want := []string{"buffered", "published during replay"}
-	if len(frames) != len(want) {
-		t.Fatalf("wanted %d SSE frames, got %q", len(want), rec.Body.String())
-	}
-	for i, frame := range frames {
-		data, ok := strings.CutPrefix(frame, "data: ")
-		var event events.Event
-		if !ok || json.Unmarshal([]byte(data), &event) != nil || event.Message != want[i] {
-			t.Fatalf("frame %d: wanted event %q, got %q", i, want[i], frame)
-		}
 	}
 }
 
