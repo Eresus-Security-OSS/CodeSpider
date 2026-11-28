@@ -230,3 +230,58 @@ func TestRunnerModelRoutingAndBlueTeamRefutation(t *testing.T) {
 		t.Fatalf("expected corroborated badge on surviving comment, got: %s", reg.State.SnapshotComments()[0].Body)
 	}
 }
+
+func TestBlueTeamBlocksNonReadOnlyToolCalls(t *testing.T) {
+	var turn atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := turn.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		var resp map[string]any
+		switch n {
+		case 1:
+			// Blue-Team LLM attempts a disallowed write_file call alongside record_verdict
+			resp = map[string]any{
+				"choices": []any{map[string]any{
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{
+							map[string]any{
+								"id": "bad1", "type": "function",
+								"function": map[string]any{"name": "write_file", "arguments": `{"path":"pwn.txt","content":"owned"}`},
+							},
+							map[string]any{
+								"id": "v1", "type": "function",
+								"function": map[string]any{"name": "record_verdict", "arguments": `{"index":0,"verdict":"CONFIRM","reason":"real"}`},
+							},
+						},
+					},
+				}},
+				"usage": map[string]any{"total_tokens": 40},
+			}
+		default:
+			t.Fatalf("unexpected LLM turn %d", n)
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	worktree := t.TempDir()
+	calledDisallowed := false
+	reg := tools.NewRegistry(tools.Params{
+		WorktreeDir: worktree,
+		EnableWrite: true,
+		Trigger:     gitea.ReviewTrigger{Kind: "pr_review", Owner: "acme", Repo: "api", PRNumber: 1},
+		OnToolCall: func(name, _ string) {
+			if name == "write_file" {
+				calledDisallowed = true
+			}
+		},
+	})
+	_, _ = reg.Execute(context.Background(), "add_inline_comment", `{"path":"a.go","line":1,"severity":"critical","body":"issue"}`)
+
+	runner := NewRunner(llm.NewClient(srv.URL, "k", "gpt-5", 5*time.Second), Options{})
+	runner.runBlueTeamVerification(context.Background(), runner.llm, gitea.ReviewTrigger{Owner: "acme", Repo: "api", PRNumber: 1}, reg, nil)
+	if calledDisallowed {
+		t.Fatal("Blue-Team verification must never execute non-read-only tools such as write_file")
+	}
+}
